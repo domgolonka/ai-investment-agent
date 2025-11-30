@@ -1,0 +1,152 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install Poetry
+      run: |
+        curl -sSL https://install.python-poetry.org | python3 -
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        poetry install --no-interaction
+    
+    - name: Run tests
+      run: |
+        poetry run pytest tests/ -v --tb=short
+      env:
+        # Provide dummy keys for tests that need them
+        GOOGLE_API_KEY: "test-key-for-ci"
+        TAVILY_API_KEY: "test-key-for-ci"
+    
+    - name: Validate prompt JSON files
+      run: |
+        poetry run python -c "
+        import json
+        from pathlib import Path
+        
+        prompt_dir = Path('prompts')
+        errors = []
+        
+        for prompt_file in prompt_dir.glob('*.json'):
+            try:
+                with open(prompt_file) as f:
+                    data = json.load(f)
+                    # Basic validation
+                    if 'agent_key' not in data:
+                        errors.append(f'{prompt_file.name}: missing agent_key')
+                    if 'system_message' not in data:
+                        errors.append(f'{prompt_file.name}: missing system_message')
+            except json.JSONDecodeError as e:
+                errors.append(f'{prompt_file.name}: invalid JSON - {e}')
+        
+        if errors:
+            print('❌ Prompt validation errors:')
+            for error in errors:
+                print(f'  - {error}')
+            exit(1)
+        else:
+            print('✅ All prompt files are valid JSON')
+        "
+    
+    - name: Check for accidentally committed secrets
+      run: |
+        echo "🔍 Scanning for accidentally committed secrets..."
+        
+        # Patterns that should never be in the repo
+        FORBIDDEN_PATTERNS=(
+          "sk-[A-Za-z0-9]{48}"                    # OpenAI API keys
+          "AIzaSy[A-Za-z0-9_-]{33}"               # Google API keys
+          "tvly-[A-Za-z0-9]{32,}"                 # Tavily API keys
+          "[0-9]{10,}_[A-Za-z0-9]{32,}"           # FMP API keys (numeric prefix)
+          "AKIA[0-9A-Z]{16}"                      # AWS access keys
+          "ghp_[A-Za-z0-9]{36}"                   # GitHub personal access tokens
+          "gho_[A-Za-z0-9]{36}"                   # GitHub OAuth tokens
+          "github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}"  # GitHub fine-grained tokens
+          "[a-zA-Z0-9_-]*:[a-zA-Z0-9_-]{40,}"     # Generic API tokens (key:secret)
+          "password[\"']\s*[:=]\s*[\"'][^\"']{8,}"  # Hardcoded passwords
+          "api[_-]?key[\"']\s*[:=]\s*[\"'][^\"']{16,}"  # Hardcoded API keys
+        )
+        
+        # File extensions to check
+        FILE_PATTERNS=(
+          "*.py"
+          "*.json"
+          "*.yml"
+          "*.yaml"
+          "*.env"
+          "*.sh"
+          "*.md"
+        )
+        
+        found_secrets=0
+        
+        for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+          for file_ext in "${FILE_PATTERNS[@]}"; do
+            # Search for pattern in files, excluding .git directory
+            matches=$(find . -name "$file_ext" -not -path "./.git/*" -not -path "./.venv/*" -not -path "./node_modules/*" -type f -exec grep -l -E "$pattern" {} \; 2>/dev/null || true)
+            
+            if [ -n "$matches" ]; then
+              echo "❌ SECURITY ALERT: Potential secret found matching pattern: $pattern"
+              echo "   Files:"
+              echo "$matches" | sed 's/^/     /'
+              found_secrets=$((found_secrets + 1))
+            fi
+          done
+        done
+        
+        # Also check for common secret filenames that should be gitignored
+        FORBIDDEN_FILES=(
+          ".env"
+          ".env.local"
+          ".env.production"
+          "credentials.json"
+          "service-account.json"
+          "secrets.json"
+          "private_key.pem"
+          "*.key"
+          "*.pem"
+        )
+        
+        for file_pattern in "${FORBIDDEN_FILES[@]}"; do
+          # Check if these files exist and are NOT in .gitignore
+          files=$(find . -name "$file_pattern" -not -path "./.git/*" -not -path "./.venv/*" -type f 2>/dev/null || true)
+          
+          if [ -n "$files" ]; then
+            # Check if they're properly gitignored
+            for file in $files; do
+              if git check-ignore -q "$file"; then
+                echo "✅ $file is properly gitignored"
+              else
+                echo "❌ SECURITY ALERT: Secret file not gitignored: $file"
+                found_secrets=$((found_secrets + 1))
+              fi
+            done
+          fi
+        done
+        
+        if [ $found_secrets -gt 0 ]; then
+          echo ""
+          echo "❌ Found $found_secrets potential secret(s) in repository!"
+          echo "⚠️  Please remove secrets and use environment variables instead."
+          exit 1
+        else
+          echo "✅ No secrets detected in repository"
+        fi

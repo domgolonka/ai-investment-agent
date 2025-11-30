@@ -1,0 +1,60 @@
+# Terraform variables for the DEVELOPMENT environment
+# Copy this file to terraform.tfvars and update with your actual values
+# Optimized for cost efficiency and rapid iteration.
+
+environment         = "dev"
+resource_group_name = "trading-system-dev-rg"
+location            = "eastus"
+
+# Use a smaller, cheaper container for development
+# Note: Azure Container Instances requires specific CPU/memory ratios
+container_cpu    = 1.0   # Valid: 0.5, 1.0, 1.5, 2.0, etc.
+container_memory = 2.0   # Valid for 1.0 CPU: 0.5-3.5 GB
+restart_policy   = "OnFailure"
+log_level        = "DEBUG"
+storage_quota_gb = 10
+
+# Storage configuration - LRS is cheapest for dev
+storage_replication_type = "LRS"
+
+# Monitoring settings - reduced for cost savings
+log_retention_days        = 7
+log_daily_quota_gb        = 5
+enable_container_insights = true
+enable_managed_identity   = false
+enable_backup             = false
+
+# Docker image configuration
+# IMPORTANT: Replace with your actual Azure Container Registry URL
+# The registry must exist and be accessible before deployment
+docker_image      = "tradingsystemdev.azurecr.io/trading-system:latest"
+ticker_to_analyze = "NVDA"
+
+# Network configuration - empty list allows all IPs (development only)
+# For production, this should be restricted to specific IP ranges
+allowed_ip_ranges = []
+
+# Optional tags for resource management and cost tracking
+tags = {
+  Environment = "dev"
+  Owner       = "development-team"
+  CostCenter  = "engineering"
+  Purpose     = "development-testing"
+  AutoShutdown = "enabled"  # For cost management
+}
+
+# API Keys - These should be set as environment variables for security:
+# export TF_VAR_openai_api_key="sk-..."
+# export TF_VAR_finnhub_api_key="..."
+# export TF_VAR_tavily_api_key="tvly-..."
+# export TF_VAR_langsmith_api_key="ls_..."
+
+# For development/testing only, you can uncomment and set these values
+# (NOT recommended for production or shared repositories):
+# openai_api_key    = "sk-your-openai-key-here"
+# finnhub_api_key   = "your-finnhub-key-here"
+# tavily_api_key    = "tvly-your-tavily-key-here"
+# langsmith_api_key = "ls-your-langsmith-key-here"
+
+# Validation helper - leave as true
+validate_cpu_memory_ratio = true

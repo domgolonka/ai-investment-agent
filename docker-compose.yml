@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  investment-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: investment-agent:latest
+    container_name: investment-agent
+    
+    # Environment variables from .env file
+    env_file:
+      - .env
+    
+    # Or specify environment variables directly
+    environment:
+      # Model configuration
+      - QUICK_MODEL=${QUICK_MODEL:-gpt-4o-mini}
+      - DEEP_MODEL=${DEEP_MODEL:-gpt-4o}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - STRUCTURED_LOGGING=true
+      
+      # ChromaDB
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_PERSIST_DIRECTORY=/app/chroma_db
+      
+      # LangSmith (optional)
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+    
+    # Volume mounts for persistence
+    volumes:
+      # Persist ChromaDB data
+      - chroma-data:/app/chroma_db
+      
+      # Optional: Mount local code for development
+      # - ./src:/app/src:ro
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Network mode
+    network_mode: bridge
+    
+    # Command override (examples)
+    # Uncomment one of these or override at runtime
+    # command: ["--ticker", "AAPL", "--quick"]
+    # command: ["--ticker", "NVDA"]
+    # command: ["--ticker", "TSLA", "--quick"]
+
+volumes:
+  chroma-data:
+    driver: local

@@ -1,0 +1,524 @@
+# 🌐 Multi-Agent International Equity Analysis System
+
+> **An open-source agentic AI system that democratizes sophisticated equity research for international markets**
+
+**If you're concerned about US political instability, rising federal debt, dollar depreciation, or an AI-driven market bubble**, this system offers a way to diversify by evaluating GARP (Growth at a Reasonable Price) opportunities in ex-US markets. It uses the same multi-perspective analysis patterns employed by institutional research teams, but is powered by free- or cheap-tier AI and financial data APIs and can be run from a basic MacBook or other laptop.
+
+**What you need:** Python 3.12+, a Google Gemini API key (free tier), and basic command-line familiarity. Optional: Additional API keys for enhanced data (FMP, Tavily, EODHD). Everything runs locally on your machine—no cloud subscription required.
+
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green.svg)](https://github.com/langchain-ai/langgraph)
+
+---
+
+## 🎯 What Makes This Different
+
+**Most "AI trading bots" are simple scripts.** This is a **thesis-driven fundamental analysis engine** with institutional-grade architecture.
+
+### The Problem This Solves
+
+- **Retail investors lack access** to multi-analyst teams that debate different perspectives
+- **Ex-US markets are underserved** by English-language research platforms  
+- **Premium research tools cost $2,000-$24,000/year** (Bloomberg, FactSet)
+- **Small-cap international stocks** often have zero analyst coverage in the US
+
+### This System Provides
+
+✅ **Multi-Agent Debate Pattern** - Bull/Bear/Risk analysts argue, then a Portfolio Manager decides  
+✅ **International Coverage** - Handles HK, Japan, Taiwan, Korea with proper FX/exchange logic  
+✅ **Disciplined Risk Framework** - Hard-fail gatekeeping prevents emotional/hype-driven decisions  
+✅ **Zero Marginal Cost** - Runs on free-tier Gemini API (100+ analyses/day at $0)  
+✅ **Full Transparency** - Every decision explained with supporting data and reasoning
+
+---
+
+## 🏗️ Architecture: Agentic AI at Work
+
+This isn't a single prompt to an LLM. It's a **stateful orchestration** of specialized AI agents, each with distinct roles, debating and synthesizing information through a directed graph workflow.
+
+```mermaid
+graph TB
+    Start([User: Analyze TICKER]) --> MarketAnalyst["Market Analyst<br/>(Technical Analysis)"]
+    Start --> NewsAnalyst["News Analyst<br/>(Recent Events)"]
+    Start --> SentimentAnalyst["Sentiment Analyst<br/>(Social Media)"]
+    Start --> FundamentalsAnalyst["Fundamentals Analyst<br/>(Financial Health)"]
+    
+    MarketAnalyst --> ResearchManager["Research Manager<br/>(Synthesize Data)"]
+    NewsAnalyst --> ResearchManager
+    SentimentAnalyst --> ResearchManager
+    FundamentalsAnalyst --> ResearchManager
+    
+    ResearchManager --> BullResearcher["Bull Researcher<br/>(Upside Case)"]
+    ResearchManager --> BearResearcher["Bear Researcher<br/>(Downside Risk)"]
+    
+    BullResearcher --> Debate{Multi-Round<br/>Debate}
+    BearResearcher --> Debate
+    
+    Debate -->|Round 1-2| BullResearcher
+    Debate -->|Converged| RiskTeam["Risk Assessment Team<br/>(3 Perspectives)"]
+    
+    RiskTeam --> PortfolioManager["Portfolio Manager<br/>(Final Decision)"]
+    
+    PortfolioManager --> Decision([BUY / SELL / HOLD<br/>+ Position Size])
+    
+    style MarketAnalyst fill:#e1f5ff
+    style NewsAnalyst fill:#e1f5ff
+    style SentimentAnalyst fill:#e1f5ff
+    style FundamentalsAnalyst fill:#e1f5ff
+    style ResearchManager fill:#fff4e1
+    style BullResearcher fill:#d4edda
+    style BearResearcher fill:#f8d7da
+    style RiskTeam fill:#fff3cd
+    style PortfolioManager fill:#d1ecf1
+    style Debate fill:#ffeaa7
+    style Decision fill:#55efc4
+```
+
+### How Agents Collaborate
+
+1. **Parallel Data Gathering** - Four analyst agents simultaneously fetch technical, fundamental, news, and sentiment data
+2. **Research Synthesis** - A Research Manager combines findings and identifies key themes
+3. **Adversarial Debate** - Bull and Bear researchers argue opposite perspectives for 1-2 rounds
+4. **Risk Assessment** - Three risk analysts (Conservative/Neutral/Aggressive) evaluate from different risk tolerances
+5. **Executive Decision** - Portfolio Manager synthesizes all viewpoints and applies thesis criteria
+
+**Why This Matters:** Single-LLM systems are prone to confirmation bias. Multi-agent debate forces the AI to consider contradictory evidence, mimicking how institutional research teams actually work.
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.12+
+- Poetry (dependency management)
+- Google Gemini API key (free tier: 15 RPM)
+- Optional: Tavily API, FMP API, StockTwits access
+
+### Installation
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/multi-agent-trading-system.git
+cd multi-agent-trading-system
+
+# Install dependencies (creates .venv automatically)
+poetry install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Activate virtual environment (if needed for direct python calls)
+source .venv/bin/activate  # On macOS/Linux
+# OR
+.venv\Scripts\activate  # On Windows
+```
+
+### Run Your First Analysis
+
+```bash
+# Analyze a single ticker
+poetry run python -m src.main --ticker 0005.HK
+
+# Quick mode (faster, 1 debate round)
+poetry run python -m src.main --ticker 7203.T --quick
+
+# Batch analysis
+poetry run bash run_tickers.sh
+
+# Run tests to verify installation
+poetry run pytest tests/ -v
+```
+
+### Example Output Structure
+
+```
+# 0005.HK (HSBC HOLDINGS): SELL
+
+## Executive Summary
+FINAL DECISION: SELL
+Position Size: 0%
+Conviction: High
+
+### THESIS COMPLIANCE
+- Financial Health: 62.5% [PASS]
+- Growth Transition: 0% [FAIL]
+- Liquidity: $223M daily [PASS]
+- Analyst Coverage: 9 [PASS]
+
+### DECISION RATIONALE
+1. Hard thesis violation on growth (0% vs 50% required)
+2. High qualitative risk (geopolitical exposure, cyclical)
+3. Consensus across all risk analysts: 0% allocation
+...
+```
+
+### Troubleshooting
+
+#### Poetry/Dependency Issues
+
+If you encounter import errors, dependency conflicts, or weird behavior after updating dependencies:
+
+```bash
+# Complete clean rebuild (recommended)
+poetry env remove --all && rm poetry.lock && poetry install
+
+# Quick rebuild (keeps lock file)
+poetry env remove --all && poetry install
+
+# Nuclear option (if nothing else works)
+poetry env remove --all
+poetry cache clear pypi --all
+rm poetry.lock
+poetry install
+```
+
+#### Common Issues
+
+**Problem:** `ImportError: No module named 'langchain'`  
+**Solution:** Run `poetry install` to create/update virtual environment
+
+**Problem:** `ModuleNotFoundError` after git pull  
+**Solution:** Dependencies changed - run `poetry env remove --all && poetry install`
+
+**Problem:** Tests failing with import errors  
+**Solution:** Rebuild environment with commands above
+
+**Problem:** Poetry complains about Python version  
+**Solution:** Ensure Python 3.12+ is active: `python --version`
+
+**Problem:** API errors or rate limits  
+**Solution:** Check `.env` file has valid API keys, verify quotas at provider dashboards
+
+---
+
+## 💡 Investment Thesis (Built-In)
+
+The system enforces a **value-to-growth transition** strategy focused on:
+
+### Hard Requirements
+- ✅ **Financial Health Score ≥ 50%** - Sustainable profitability, cash flow, manageable debt
+- ✅ **Growth Score ≥ 50%** - Revenue/EPS growth, margin expansion, or turnaround trajectory  
+- ✅ **Liquidity ≥ $500k USD daily** - Tradeable via IBKR without excessive slippage
+- ✅ **Analyst Coverage < 15** - "Undiscovered" by mainstream US research
+
+### Soft Factors (Risk Scoring)
+- 📊 Valuation (P/E ≤ 18, PEG ≤ 1.2, P/B ≤ 1.4)
+- 🌍 US Revenue exposure (prefer 25-35% for diversification)
+- 🏢 ADR availability (concerns if OTC only)
+- ⚠️ Qualitative risks (geopolitical, industry headwinds, management issues)
+
+**Philosophy:** Find mid-cap stocks in international markets that are transitioning from value (undervalued) to growth (expansion phase), before US analysts discover them.
+
+---
+
+## 🛠️ Technical Highlights
+
+### Robust Data Pipeline
+
+The system uses a **smart fallback architecture** to handle unreliable free APIs:
+
+```python
+# Simplified data fetching logic
+def get_financial_metrics(ticker):
+    result = try_yfinance(ticker)
+    if insufficient(result):
+        result = merge(result, try_yahooquery(ticker))
+    if still_insufficient(result):
+        result = merge(result, try_fmp(ticker))
+    if still_insufficient(result):
+        result = merge(result, try_eodhd(ticker))
+    if critical_gaps(result):
+        result = fill_with_tavily_search(ticker)
+    return validate_and_sanitize(result)
+```
+
+**Data Sources** (in priority order):
+1. **yfinance** - Primary (free, comprehensive)
+2. **YahooQuery** - Backup for specific metrics
+3. **FMP** (Financial Modeling Prep) - Premium data if API key provided
+4. **EODHD** - Alternative fundamental data
+5. **Tavily** - Web search fallback for critical gaps
+
+### Memory System (Ticker Isolation)
+
+Each ticker analysis gets **isolated ChromaDB collections** to prevent cross-contamination:
+
+```python
+# Before fix: Global memory led to Canon data bleeding into HSBC analysis
+# After fix: Ticker-specific namespaces
+memories = create_memory_instances("0005.HK")
+# → Creates: 0005_HK_bull_memory, 0005_HK_bear_memory, etc.
+```
+
+**Why This Matters:** Without isolation, the AI might reference Samsung's chip shortage when analyzing an unrelated Hong Kong bank stock.
+
+### Prompt Engineering Excellence
+
+Each agent uses **versioned, structured prompts** with strict output formats:
+
+```json
+{
+  "agent_key": "fundamentals_analyst",
+  "version": "6.1",
+  "system_message": "### CRITICAL: DATA VALIDATION\n\nBEFORE reporting ANY metric as N/A:\n1. Verify tool returned null/error\n2. Document which tool and response\n3. Only then mark N/A...",
+  "metadata": {
+    "thesis_version": "6.0",
+    "changes": "Added strict validation to prevent data vacuum abuse"
+  }
+}
+```
+
+Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%: FAIL (hard fail)"), combining deterministic rules with LLM reasoning.
+
+---
+
+## 📊 Performance & Accuracy
+
+### Third-Party Validation (Grok/Gemini Analysis)
+
+**Overall Assessment:** 70-80% accuracy on quantitative metrics, with some limitations on sentiment analysis for mega-cap stocks.
+
+**Strengths Identified:**
+- ✅ Quantitative metrics (P/E, ROE, revenue growth) match Yahoo Finance/Bloomberg
+- ✅ Handles obscure small-caps better than free tools (e.g., SAKURA Internet 3778.T)
+- ✅ Multi-agent debate reduces hallucination vs single-prompt systems
+- ✅ "Data Vacuum" logic prevents fabrication when data unavailable
+
+**Weaknesses Identified:**
+- ⚠️ Overstates "undiscovered" thesis for mega-caps (HSBC, Samsung are well-known)
+- ⚠️ Conservative bias (strict thesis enforcement leads to more SELLs than market consensus)
+- ⚠️ Sentiment analysis limited by free StockTwits API (misses institutional sentiment)
+
+### Speed & Cost
+
+- **Quick Mode:** 2-4 minutes per ticker
+- **Standard Mode:** 5-8 minutes per ticker  
+- **API Cost:** $0 on Gemini free tier (15 RPM limit = ~100 stocks/day)
+- **Scalability:** Deploy to Azure Container Instances for 24/7 batch processing
+
+---
+
+## 🎓 Learning Agentic AI
+
+This repository is an educational resource for understanding **production-grade agentic systems**:
+
+### Key Concepts Demonstrated
+
+1. **State Machines (LangGraph)** - Conditional routing, loops, human-in-the-loop checkpoints
+2. **Memory Isolation** - Preventing RAG context bleeding across analyses  
+3. **Tool Use** - LLMs calling Python functions (data fetchers, calculators, web search)
+4. **Structured Outputs** - Enforcing JSON schemas via prompts (not just hoping for valid responses)
+5. **Debate Patterns** - Adversarial multi-agent collaboration reduces bias
+
+### Architecture Patterns Worth Studying
+
+```
+src/
+├── agents.py          # Agent factory functions (analyst_node, researcher_node)
+├── graph.py           # LangGraph state machine orchestration
+├── toolkit.py         # Tool definitions (get_financial_metrics, get_news)
+├── memory.py          # ChromaDB vector storage with ticker isolation
+├── prompts/           # Versioned, structured agent prompts (JSON)
+├── data/
+│   ├── fetcher.py     # Smart multi-source data pipeline
+│   └── validator.py   # Financial data sanity checks
+└── main.py            # CLI entry point with clean state management
+```
+
+**Why This Matters for Practitioners:**
+- Most tutorials show toy examples. This shows how to handle **production edge cases** (network failures, data corruption, API rate limits)
+- Demonstrates **separation of concerns** (agents, tools, data, orchestration)
+- Includes **tests** that actually run (not aspirational TODO comments)
+
+---
+
+## 🌍 Democratizing Finance
+
+### The Vision
+
+**Institutional research is a luxury good.** A single Bloomberg Terminal costs $24,000/year. A hedge fund analyst team costs $500k-$2M annually. This system provides:
+
+- 📈 **Institutional-quality analysis** for $0 marginal cost
+- 🌏 **Global market access** without multilingual analysts
+- 🤖 **Systematic discipline** replacing emotional trading
+- 🔬 **Reproducible research** with versioned prompts and auditable decisions
+
+### Real-World Use Cases
+
+✅ **Individual Investors** - Diversify into ex-US markets with confidence  
+✅ **AI Researchers** - Study multi-agent coordination in complex domains  
+✅ **Educators** - Teach agentic AI, RAG, and LangGraph through practical finance  
+✅ **Startups** - Foundation for boutique research services ($49/month SaaS)
+
+### Limitations & Honesty
+
+❌ **Not a Get-Rich-Quick Bot** - This is a research tool, not an execution engine  
+❌ **Data Quality** - Free APIs have gaps; premium data costs money for a reason  
+❌ **Backward-Looking** - Analyzes historical financials; struggles with forward catalysts  
+❌ **No Real-Time Execution** - You must manually place trades via your broker
+
+**Use this for:** Generating a shortlist of candidates for deep due diligence  
+**Don't use this for:** Automated trading, day trading, options strategies
+
+---
+
+## 🧪 Testing & Quality
+
+### Comprehensive Test Suite
+
+```bash
+# Run all tests
+poetry run pytest tests/ -v
+
+# Run specific test categories
+poetry run pytest tests/test_memory_isolation.py -v
+poetry run pytest tests/test_toolkit.py -v
+poetry run pytest tests/test_liquidity_tool.py -v
+
+# Check coverage
+poetry run pytest --cov=src tests/
+```
+
+**Test Coverage:**
+- ✅ Unit tests for all data fetchers and validators
+- ✅ Integration tests for memory isolation  
+- ✅ Edge case tests for AI response malformation
+- ✅ Live API tests (skipped in CI, run manually)
+
+### Recent Bug Fixes
+
+The test suite recently identified **7 production bugs** (NaN handling, HTML sanitization, async/sync mismatches). See `BUG_REPORT.md` for details.
+
+**Lesson:** Edge case testing is essential for AI systems that consume unreliable external data.
+
+---
+
+## 🚢 Deployment (Experimental)
+
+### Docker Support
+
+```bash
+# Build image
+docker build -t trading-system .
+
+# Run analysis
+docker run -e GOOGLE_API_KEY=your_key trading-system --ticker 0005.HK
+```
+
+### Azure Container Instances (Terraform)
+
+```bash
+cd terraform/
+terraform init
+terraform plan -var="google_api_key=your_key"
+terraform apply
+```
+
+**Note:** Docker and Terraform configurations are **experimental**. They provide a starting point for productionization but require customization for your use case.
+
+### GitHub Actions (CI/CD)
+
+```yaml
+# .github/workflows/test.yml
+- Runs pytest on every push
+- Validates prompt JSON schemas
+- Checks code style with ruff
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Areas for improvement:
+
+1. **Data Sources** - Integrate Polygon.io, Alpha Vantage, or Coingecko
+2. **Sentiment** - Add X (Twitter) API, Reddit scraping, or Stocktwits Pro
+3. **Execution** - IBKR API integration for automated order placement
+4. **UI** - Streamlit/Gradio frontend for non-technical users
+5. **Backtesting** - Historical performance simulation framework
+
+### Development Setup
+
+```bash
+# Install dev dependencies
+poetry install --with dev
+
+# Run linter
+poetry run ruff check src/
+
+# Format code  
+poetry run ruff format src/
+
+# Type checking
+poetry run mypy src/
+```
+
+### Project Structure Notes
+
+**scratch/ Directory:** Used for temporary analysis output and test files. The `.gitignore` excludes all contents but keeps the directory:
+
+```gitignore
+# In .gitignore
+scratch/*
+!scratch/.gitkeep
+```
+
+This ensures the directory exists for scripts like `run_tickers.sh` while keeping analysis output local.
+
+---
+
+## 📚 Documentation
+
+- **[Prompt Engineering Guide](prompts/README.md)** - Versioning, best practices, consistency
+- **[Agent Design Patterns](docs/AGENTS.md)** - How each agent works
+- **[Data Pipeline](docs/DATA.md)** - Multi-source fallback architecture
+- **[Memory System](docs/MEMORY.md)** - Ticker isolation and RAG patterns
+- **[Deployment Guide](docs/DEPLOYMENT.md)** - Azure, Docker, CI/CD
+
+---
+
+## ⚖️ License & Disclaimer
+
+**License:** MIT - Free for commercial and personal use
+
+**Disclaimer:** This system is for **research and educational purposes only**. It is **NOT financial advice**. 
+
+- AI systems can make errors or be biased
+- Data sources may have inaccuracies or delays  
+- International investing carries currency, political, and regulatory risks
+- Always conduct independent due diligence before investing real money
+
+**DYOR (Do Your Own Research)** - Use this tool to generate ideas, not to make final decisions.
+
+---
+
+## 🙏 Acknowledgments
+
+**Built With:**
+- [LangChain](https://python.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraph/) - Agent orchestration
+- [Google Gemini](https://deepmind.google/technologies/gemini/) - LLM inference (free tier!)
+- [ChromaDB](https://www.trychroma.com/) - Vector storage  
+- [yfinance](https://github.com/ranaroussi/yfinance) - Market data
+- [Tavily](https://tavily.com/) - Web search API
+
+**Inspiration:**
+- [Fareed Khan](https://levelup.gitconnected.com/building-a-deep-thinking-trading-system-with-multi-agentic-architecture-c13da7effd2d) - Multi-agent trading systems
+- Institutional research teams at hedge funds and investment banks
+- The open-source AI community making powerful tools accessible
+
+---
+
+## 📬 Questions or Feedback?
+
+- **Issues:** [GitHub Issues](https://github.com/yourusername/repo/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/yourusername/repo/discussions)
+- **LinkedIn:** [Your Profile](https://linkedin.com/in/yourprofile) (for collaboration inquiries)
+
+---
+
+**⭐ If you found this useful, please star the repo!** It helps others discover the project.
+
+**🔀 Fork it, improve it, share it.** Let's democratize sophisticated financial analysis together.

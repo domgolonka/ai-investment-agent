@@ -1,0 +1,57 @@
+# Terraform variables for the STAGING environment
+# Copy this file to terraform.tfvars and update with your actual values
+# A mid-tier configuration for pre-production testing.
+
+environment         = "staging"
+resource_group_name = "trading-system-staging-rg"
+location            = "eastus"
+
+# A mid-tier container for testing
+container_cpu    = 2.0
+container_memory = 4.0
+restart_policy   = "Always"
+log_level        = "INFO"
+storage_quota_gb = 50
+
+# Storage configuration
+storage_replication_type = "GRS"
+
+# Monitoring settings
+log_retention_days   = 30
+log_daily_quota_gb   = 20
+enable_container_insights = true
+enable_managed_identity   = true
+enable_backup            = false
+
+# Use a specific versioned Docker image for staging
+# Replace 'youracr.azurecr.io' with your actual Azure Container Registry
+docker_image      = "youracr.azurecr.io/trading-system:staging-v1.2"
+ticker_to_analyze = "TSLA"
+
+# Network configuration - restrict to specific IP ranges in staging
+# Update with your organization's IP ranges
+allowed_ip_ranges = [
+  "10.0.0.0/8",     # Private network range
+  "172.16.0.0/12",  # Private network range
+  "192.168.0.0/16"  # Private network range
+]
+
+# Optional tags
+tags = {
+  Environment = "staging"
+  Owner       = "qa-team"
+  CostCenter  = "engineering"
+  Purpose     = "pre-production-testing"
+}
+
+# API Keys - These should be set as environment variables:
+# export TF_VAR_openai_api_key="sk-..."
+# export TF_VAR_finnhub_api_key="..."
+# export TF_VAR_tavily_api_key="tvly-..."
+# export TF_VAR_langsmith_api_key="ls_..."
+
+# Alternatively, uncomment and set these values (NOT recommended for production):
+# openai_api_key    = "sk-your-openai-key-here"
+# finnhub_api_key   = "your-finnhub-key-here"
+# tavily_api_key    = "tvly-your-tavily-key-here"
+# langsmith_api_key = "ls-your-langsmith-key-here"

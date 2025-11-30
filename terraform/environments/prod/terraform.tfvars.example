@@ -1,0 +1,59 @@
+# Terraform variables for the PRODUCTION environment
+# Copy this file to terraform.tfvars and update with your actual values
+# A more powerful configuration for production workloads.
+
+environment         = "prod"
+resource_group_name = "trading-system-prod-rg"
+location            = "eastus"
+
+# A more powerful container for production
+container_cpu    = 4.0
+container_memory = 8.0
+restart_policy   = "Always"
+log_level        = "INFO"
+storage_quota_gb = 100
+
+# Storage configuration with geo-redundancy for production
+storage_replication_type = "GRS"
+
+# Monitoring settings for production
+log_retention_days   = 90
+log_daily_quota_gb   = -1  # Unlimited for production monitoring
+enable_container_insights = true
+enable_managed_identity   = true
+enable_backup            = true
+
+# Use a specific, tested versioned Docker image for production
+# Replace 'youracr.azurecr.io' with your actual Azure Container Registry
+docker_image      = "youracr.azurecr.io/trading-system:prod-v1.2.1"
+ticker_to_analyze = "SPY"
+
+# Network configuration - strictly controlled IP ranges for production
+# Update with your organization's production IP ranges
+allowed_ip_ranges = [
+  "203.0.113.0/24",    # Example production office range
+  "198.51.100.0/24"    # Example production VPN range
+]
+
+# Production tags for cost tracking and compliance
+tags = {
+  Environment    = "prod"
+  Owner          = "trading-team"
+  CostCenter     = "trading-operations"
+  Compliance     = "required"
+  BackupPolicy   = "daily"
+  MonitoringTier = "premium"
+  SLA            = "99.9"
+}
+
+# API Keys - These MUST be set as environment variables in production:
+# export TF_VAR_openai_api_key="sk-..."
+# export TF_VAR_finnhub_api_key="..."
+# export TF_VAR_tavily_api_key="tvly-..."
+# export TF_VAR_langsmith_api_key="ls_..."
+
+# DO NOT uncomment these in production - use environment variables or Azure Key Vault:
+# openai_api_key    = "sk-your-openai-key-here"
+# finnhub_api_key   = "your-finnhub-key-here"
+# tavily_api_key    = "tvly-your-tavily-key-here"
+# langsmith_api_key = "ls-your-langsmith-key-here"
