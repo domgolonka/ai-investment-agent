@@ -318,10 +318,10 @@ The system enforces a **value-to-growth transition** strategy focused on:
 ### Soft Factors (Risk Scoring)
 - 📊 Valuation (P/E ≤ 18, PEG ≤ 1.2, P/B ≤ 1.4)
 - 🌍 US Revenue exposure (prefer 25-35% for diversification)
-- 🏢 ADR availability (concerns if OTC only)
+- 🏢 ADR availability (sponsored means equity is well "discovered")
 - ⚠️ Qualitative risks (geopolitical, industry headwinds, management issues)
 
-**Philosophy:** Find mid-cap stocks in international markets that are transitioning from value (undervalued) to growth (expansion phase), before US analysts discover them.
+**Philosophy:** Find mid-cap stocks in international markets that are transitioning from value (undervalued) to growth (expansion phase), before too many US analysts discover them.  One of the few ways retail can generate alpha, competing against major funds, hedgies, etc.
 
 ---
 
@@ -329,7 +329,7 @@ The system enforces a **value-to-growth transition** strategy focused on:
 
 ### Robust Data Pipeline
 
-The system uses a **smart fallback architecture** to handle unreliable free APIs:
+The system uses a **smart fallback architecture** to handle unreliable free APIs.  I wish web (Tavily) were more reliable, but, sigh:
 
 ```python
 # Simplified data fetching logic
@@ -350,8 +350,8 @@ def get_financial_metrics(ticker):
 1. **yfinance** - Primary (free, comprehensive)
 2. **YahooQuery** - Backup for specific metrics
 3. **FMP** (Financial Modeling Prep) - Premium data if API key provided
-4. **EODHD** - Alternative fundamental data
-5. **Tavily** - Web search fallback for critical gaps
+4. **EODHD** - Alternative fundamental data (I paid for a key here)
+5. **Tavily** - Web search fallback for critical gaps (this code needs improvement)
 
 ### Memory System (Ticker Isolation)
 
@@ -364,7 +364,7 @@ memories = create_memory_instances("0005.HK")
 # → Creates: 0005_HK_bull_memory, 0005_HK_bear_memory, etc.
 ```
 
-**Why This Matters:** Without isolation, the AI might reference Samsung's chip shortage when analyzing an unrelated Hong Kong bank stock.
+**Why This Matters:** Without isolation, the AI might reference Samsung's chip shortage when analyzing an unrelated Hong Kong bank stock.  And yes, this kept happening.  When writing agentic systems, agents need to share data when you want them to, not when you don't, and historical data (Chroma) needs to be stored carefully (here by ticker) or it cross-contaminates later runs that use it.
 
 ### Prompt Engineering Excellence
 
@@ -382,7 +382,7 @@ Each agent uses **versioned, structured prompts** with strict output formats:
 }
 ```
 
-Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%: FAIL (hard fail)"), combining deterministic rules with LLM reasoning.
+Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%: FAIL (hard fail)"), combining deterministic rules with LLM reasoning, such as it is as of late 2025.
 
 ---
 
@@ -390,7 +390,7 @@ Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%:
 
 ### Third-Party Validation (Grok/Gemini Analysis)
 
-**Overall Assessment:** 70-80% accuracy on quantitative metrics, with some limitations on sentiment analysis for mega-cap stocks.
+**Overall Assessment:** 80%-ish accuracy on quantitative metrics, with some limitations on sentiment analysis for mega-cap stocks and messy ADR detection and liquidity calculation (turns out, currencies are hard).
 
 **Strengths Identified:**
 - ✅ Quantitative metrics (P/E, ROE, revenue growth) match Yahoo Finance/Bloomberg
@@ -399,16 +399,20 @@ Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%:
 - ✅ "Data Vacuum" logic prevents fabrication when data unavailable
 
 **Weaknesses Identified:**
-- ⚠️ Overstates "undiscovered" thesis for mega-caps (HSBC, Samsung are well-known)
-- ⚠️ Conservative bias (strict thesis enforcement leads to more SELLs than market consensus)
+- ⚠️ Enforces "undiscovered" thesis for mega-caps (HSBC, Samsung are well-known)
+- ⚠️ Yet, favors mega-caps in a weird way because you can find data on them!
+- ⚠️ Can't fully match real fund managers, who have just amazing data at their fingertips
 - ⚠️ Sentiment analysis limited by free StockTwits API (misses institutional sentiment)
+- ⚠️ Currencies aren't handled perfectly (liquidity is especially hard to get right)
 
 ### Speed & Cost
 
 - **Quick Mode:** 2-4 minutes per ticker
-- **Standard Mode:** 5-8 minutes per ticker  
-- **API Cost:** $0 on Gemini free tier (15 RPM limit = ~100 stocks/day)
+- **Standard Mode:** 5-10 minutes per ticker  
+- **API Cost:** $0 on Gemini free tier (15 RPM limit = ~100 stocks/day; I went to tier 2)
 - **Scalability:** Deploy to Azure Container Instances for 24/7 batch processing
+
+One future enhancement would be to include building the pre-search for hundreds of tickers to look at right in, as an option, so the scan could be started without having to use the ```scripts/run_tickers.sh``` wrapper.  Another might be building in a real UI, lol.
 
 ---
 
@@ -421,8 +425,8 @@ This repository is an educational resource for understanding **production-grade 
 1. **State Machines (LangGraph)** - Conditional routing, loops, human-in-the-loop checkpoints
 2. **Memory Isolation** - Preventing RAG context bleeding across analyses  
 3. **Tool Use** - LLMs calling Python functions (data fetchers, calculators, web search)
-4. **Structured Outputs** - Enforcing JSON schemas via prompts (not just hoping for valid responses)
-5. **Debate Patterns** - Adversarial multi-agent collaboration reduces bias
+4. **Structured Outputs** - Enforcing consistent, structured reporting formats via prompts 
+5. **Debate Patterns** - Adversarial multi-agent collaboration (reduces bias)
 
 ### Architecture Patterns Worth Studying
 
@@ -464,7 +468,7 @@ src/
 ✅ **Educators** - Teach agentic AI, RAG, and LangGraph through practical finance  
 ✅ **Startups** - Foundation for boutique research services ($49/month SaaS)
 
-### Limitations & Honesty
+### Limitations & Reality Check
 
 ❌ **Not a Get-Rich-Quick Bot** - This is a research tool, not an execution engine  
 ❌ **Data Quality** - Free APIs have gaps; premium data costs money for a reason  
@@ -479,6 +483,8 @@ src/
 ## 🧪 Testing & Quality
 
 ### Comprehensive Test Suite
+
+Run tests if you are thinking of changing anything or issuing a PR, or even if you've forked the repo and are, e.g., changing the investment hypothesis.  Make new tests to cover code you write.
 
 ```bash
 # Run all tests
@@ -499,17 +505,13 @@ poetry run pytest --cov=src tests/
 - ✅ Edge case tests for AI response malformation
 - ✅ Live API tests (skipped in CI, run manually)
 
-### Recent Bug Fixes
-
-The test suite recently identified **7 production bugs** (NaN handling, HTML sanitization, async/sync mismatches). See `BUG_REPORT.md` for details.
-
-**Lesson:** Edge case testing is essential for AI systems that consume unreliable external data.
+**Lesson:** Edge case testing is essential for AI systems that consume unreliable external data.  It's not easy to get agentic AI systems right.  They require a lot of care, almost like people.
 
 ---
 
 ## 🚢 Deployment (Experimental)
 
-### Docker Support
+### Docker "Support"
 
 ```bash
 # Build image
@@ -521,6 +523,8 @@ docker run -e GOOGLE_API_KEY=your_key trading-system --ticker 0005.HK
 
 ### Azure Container Instances (Terraform)
 
+I roughed this out, so folks would have a sense of what to do:
+
 ```bash
 cd terraform/
 terraform init
@@ -528,7 +532,7 @@ terraform plan -var="google_api_key=your_key"
 terraform apply
 ```
 
-**Note:** Docker and Terraform configurations are **experimental**. They provide a starting point for productionization but require customization for your use case.
+**Note:** Docker and Terraform configurations are **experimental**. They provide a starting point for productionization but require customization for your use case.  They will not run correctly out of the box.  You can ask coding AIs (as of late 2025, Anthropic is best) to help you set up for your environment.
 
 ### GitHub Actions (CI/CD)
 
