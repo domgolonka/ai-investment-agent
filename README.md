@@ -621,7 +621,7 @@ This ensures the directory exists for scripts like `run_tickers.sh` while keepin
 
 - **Issues:** [GitHub Issues](https://github.com/yourusername/repo/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/yourusername/repo/discussions)
-- **LinkedIn:** [Your Profile](https://linkedin.com/in/yourprofile) (for collaboration inquiries)
+- **LinkedIn:** [Your Profile](https://www.linkedin.com/in/goerwitz)
 
 ---
 
