@@ -260,7 +260,7 @@ def create_risk_debater_node(llm, agent_key: str) -> Callable:
         try:
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             risk_state = state.get('risk_debate_state', {}).copy()
-            risk_state['history'] += f"\n{agent_prompt.agent_name}: {response.content}"
+            risk_state['history'] += f"\n{agent_prompt.agent_name}: {response.content}\n"
             risk_state['count'] += 1
             return {"risk_debate_state": risk_state}
         except Exception as e:

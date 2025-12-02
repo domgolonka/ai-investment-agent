@@ -211,12 +211,12 @@ class TestCleanText:
         reporter = QuietModeReporter("AAPL")
         text = "   \n\n  Content  \n\n  "
         result = reporter._clean_text(text)
-        assert result == "Content"
+        assert result == "Content\n"
     
     def test_clean_preserves_content(self):
         """Test content is preserved."""
         reporter = QuietModeReporter("AAPL")
-        text = "This is important content"
+        text = "This is important content\n"
         result = reporter._clean_text(text)
         assert result == text
 

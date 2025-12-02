@@ -8,7 +8,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green.svg)](https://github.com/langchain-ai/langgraph)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.0+-green.svg)](https://github.com/langchain-ai/langgraph)
 
 ---
 
@@ -119,7 +119,11 @@ source .venv/bin/activate  # On macOS/Linux
 ### Run Your First Analysis
 
 ```bash
-# Analyze a single ticker
+# Suppress gRPC fork() cleanup issue warnings (mostly an OS/X thing)
+export GRPC_VERBOSITY=ERROR
+export GRPC_TRACE=""
+
+# Analyze a single ticker; add --quiet to skip all the logging
 poetry run python -m src.main --ticker 0005.HK
 
 # Quick mode (faster, 1 debate round)

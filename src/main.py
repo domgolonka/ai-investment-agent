@@ -5,7 +5,17 @@ Updated for Gemini 3 (Nov 2025).
 """
 
 import argparse
+
 import os
+
+# Chroma telemetry is just a pain; need to catch this early
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY_ENABLED"] = "False"
+
+# Suppress gRPC fork warnings; if gRPC skips fork handlers, so be it
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "1" # handle forks gracefully
+os.environ["GRPC_POLL_STRATEGY"] = "poll"
+
 import sys
 import asyncio
 import logging

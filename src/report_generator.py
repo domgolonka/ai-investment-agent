@@ -185,7 +185,9 @@ class QuietModeReporter:
             text,
             flags=re.MULTILINE
         )
-        
+
+        if not text.endswith("\n"):
+            return text + "\n"       
         return text
 
 
