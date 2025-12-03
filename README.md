@@ -123,7 +123,7 @@ source .venv/bin/activate  # On macOS/Linux
 export GRPC_VERBOSITY=ERROR
 export GRPC_TRACE=""
 
-# Analyze a single ticker; add --quiet to skip all the logging
+# Analyze a single ticker; add --quiet to skip all the logging; add --brief for short output
 poetry run python -m src.main --ticker 0005.HK
 
 # Quick mode (faster, 1 debate round)
@@ -144,7 +144,7 @@ For serious portfolio construction, you'll want to screen many candidates at onc
 
 Use ChatGPT, Claude, or Gemini with this prompt to generate a candidate list:
 
-```
+```text
 Generate a plain-text list of 300-500 Yahoo Finance ticker symbols for international equities that meet these criteria:
 
 REQUIRED:
@@ -170,7 +170,7 @@ Output the list and provide a download link so I can save it as sample_tickers.t
 
 **Alternative:** Ask the AI to output as a code block you can copy directly:
 
-```
+```text
 [Same prompt as above, but add:]
 
 Format the output as a code block so I can copy-paste it into a text file.
@@ -200,7 +200,7 @@ EOF
 
 #### Step 3: Run Batch Analysis
 
-**⚠️ This will take a long time (likely overnight for 300+ tickers)**
+Note: **⚠️ This will take a long time (likely overnight for 300+ tickers)**
 
 ```bash
 # macOS users: Prevent sleep during long analysis
@@ -214,6 +214,7 @@ caffeinate -i ./scripts/run_tickers.sh
 ```
 
 **Timing estimates:**
+
 - 50 tickers: ~2-4 hours (standard mode) or ~1-2 hours (quick mode)
 - 100 tickers: ~4-8 hours (standard mode) or ~2-4 hours (quick mode)
 - 300+ tickers: ~12-24 hours (standard mode) or ~6-12 hours (quick mode)
@@ -241,6 +242,7 @@ echo "SELL: $(grep -c 'FINAL DECISION: SELL' scratch/ticker_analysis_results.md)
 #### What to Expect
 
 From a list of 300 candidates, you'll typically get:
+
 - **BUY recommendations:** 5-15 stocks (highly selective GARP filter)
 - **HOLD recommendations:** 20-40 stocks (interesting but flawed)
 - **SELL recommendations:** 250+ stocks (thesis violations, poor fundamentals)
@@ -249,7 +251,7 @@ The system is **intentionally conservative** - it's designed to find the best 2-
 
 ### Example Output Structure
 
-```
+```text
 # 0005.HK (HSBC HOLDINGS): SELL
 
 ## Executive Summary
@@ -314,12 +316,14 @@ poetry install
 The system enforces a **value-to-growth transition** strategy focused on:
 
 ### Hard Requirements
+
 - ✅ **Financial Health Score ≥ 50%** - Sustainable profitability, cash flow, manageable debt
 - ✅ **Growth Score ≥ 50%** - Revenue/EPS growth, margin expansion, or turnaround trajectory  
 - ✅ **Liquidity ≥ $500k USD daily** - Tradeable via IBKR without excessive slippage
 - ✅ **Analyst Coverage < 15** - "Undiscovered" by mainstream US research
 
 ### Soft Factors (Risk Scoring)
+
 - 📊 Valuation (P/E ≤ 18, PEG ≤ 1.2, P/B ≤ 1.4)
 - 🌍 US Revenue exposure (prefer 25-35% for diversification)
 - 🏢 ADR availability (sponsored means equity is well "discovered")
@@ -351,6 +355,7 @@ def get_financial_metrics(ticker):
 ```
 
 **Data Sources** (in priority order):
+
 1. **yfinance** - Primary (free, comprehensive)
 2. **YahooQuery** - Backup for specific metrics
 3. **FMP** (Financial Modeling Prep) - Premium data if API key provided
@@ -397,12 +402,14 @@ Prompts enforce **algorithms via natural language** (e.g., "IF US Revenue > 35%:
 **Overall Assessment:** 80%-ish accuracy on quantitative metrics, with some limitations on sentiment analysis for mega-cap stocks and messy ADR detection and liquidity calculation (turns out, currencies are hard).
 
 **Strengths Identified:**
+
 - ✅ Quantitative metrics (P/E, ROE, revenue growth) match Yahoo Finance/Bloomberg
 - ✅ Handles obscure small-caps better than free tools (e.g., SAKURA Internet 3778.T)
 - ✅ Multi-agent debate reduces hallucination vs single-prompt systems
 - ✅ "Data Vacuum" logic prevents fabrication when data unavailable
 
 **Weaknesses Identified:**
+
 - ⚠️ Enforces "undiscovered" thesis for mega-caps (HSBC, Samsung are well-known)
 - ⚠️ Yet, favors mega-caps in a weird way because you can find data on them!
 - ⚠️ Can't fully match real fund managers, who have just amazing data at their fingertips
@@ -429,12 +436,12 @@ This repository is an educational resource for understanding **production-grade 
 1. **State Machines (LangGraph)** - Conditional routing, loops, human-in-the-loop checkpoints
 2. **Memory Isolation** - Preventing RAG context bleeding across analyses  
 3. **Tool Use** - LLMs calling Python functions (data fetchers, calculators, web search)
-4. **Structured Outputs** - Enforcing consistent, structured reporting formats via prompts 
+4. **Structured Outputs** - Enforcing consistent, structured reporting formats via prompts
 5. **Debate Patterns** - Adversarial multi-agent collaboration (reduces bias)
 
 ### Architecture Patterns Worth Studying
 
-```
+```text
 src/
 ├── agents.py          # Agent factory functions (analyst_node, researcher_node)
 ├── graph.py           # LangGraph state machine orchestration
@@ -448,6 +455,7 @@ src/
 ```
 
 **Why This Matters for Practitioners:**
+
 - Most tutorials show toy examples. This shows how to handle **production edge cases** (network failures, data corruption, API rate limits)
 - Demonstrates **separation of concerns** (agents, tools, data, orchestration)
 - Includes **tests** that actually run (not aspirational TODO comments)
@@ -504,6 +512,7 @@ poetry run pytest --cov=src tests/
 ```
 
 **Test Coverage:**
+
 - ✅ Unit tests for all data fetchers and validators
 - ✅ Integration tests for memory isolation  
 - ✅ Edge case tests for AI response malformation
@@ -593,7 +602,7 @@ This ensures the directory exists for scripts like `run_tickers.sh` while keepin
 
 **License:** MIT - Free for commercial and personal use
 
-**Disclaimer:** This system is for **research and educational purposes only**. It is **NOT financial advice**. 
+**Disclaimer:** This system is for **research and educational purposes only**. It is **NOT financial advice**.
 
 - AI systems can make errors or be biased
 - Data sources may have inaccuracies or delays  
@@ -607,6 +616,7 @@ This ensures the directory exists for scripts like `run_tickers.sh` while keepin
 ## 🙏 Acknowledgments
 
 **Built With:**
+
 - [LangChain](https://python.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraph/) - Agent orchestration
 - [Google Gemini](https://deepmind.google/technologies/gemini/) - LLM inference (free tier!)
 - [ChromaDB](https://www.trychroma.com/) - Vector storage  
@@ -614,6 +624,7 @@ This ensures the directory exists for scripts like `run_tickers.sh` while keepin
 - [Tavily](https://tavily.com/) - Web search API
 
 **Inspiration:**
+
 - [Fareed Khan](https://levelup.gitconnected.com/building-a-deep-thinking-trading-system-with-multi-agentic-architecture-c13da7effd2d) - Multi-agent trading systems
 - [Clive Thompson](https://www.linkedin.com/in/clive-thompson-661997251) - just a smart value trader
 - Institutional research teams at hedge funds and investment banks

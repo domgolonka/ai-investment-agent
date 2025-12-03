@@ -1,6 +1,7 @@
 """
 Tests for report_generator.py
 Covers normalization, decision extraction, and report generation.
+UPDATED: Added tests for --brief mode functionality.
 """
 
 import pytest
@@ -166,6 +167,84 @@ class TestExtractDecision:
         """Test extraction from None input."""
         reporter = QuietModeReporter("AAPL")
         assert reporter.extract_decision(None) == "HOLD"
+
+
+class TestExtractDecisionRationale:
+    """Test _extract_decision_rationale() for brief mode."""
+    
+    def test_extract_rationale_section(self):
+        """Test extraction of explicit RATIONALE section."""
+        reporter = QuietModeReporter("AAPL")
+        text = """
+Action: BUY
+
+DECISION RATIONALE: Strong fundamentals and positive momentum suggest this is 
+a good entry point. The company is well-positioned for growth.
+
+Additional notes here.
+"""
+        rationale = reporter._extract_decision_rationale(text)
+        assert "Strong fundamentals" in rationale
+        assert "good entry point" in rationale
+        assert "Additional notes" not in rationale  # Should stop at section boundary
+    
+    def test_extract_rationale_uppercase(self):
+        """Test extraction with all caps RATIONALE."""
+        reporter = QuietModeReporter("AAPL")
+        text = "Action: SELL\n\nRATIONALE: Overvalued and risky market conditions."
+        rationale = reporter._extract_decision_rationale(text)
+        assert "Overvalued" in rationale
+    
+    def test_extract_reasoning_section(self):
+        """Test extraction using REASONING keyword."""
+        reporter = QuietModeReporter("AAPL")
+        text = "Decision: HOLD\n\nREASONING: Waiting for clearer signals before entry."
+        rationale = reporter._extract_decision_rationale(text)
+        assert "Waiting for clearer" in rationale
+    
+    def test_extract_justification_section(self):
+        """Test extraction using JUSTIFICATION keyword."""
+        reporter = QuietModeReporter("AAPL")
+        text = "Action: BUY\n\nJUSTIFICATION: Technical indicators support bullish move."
+        rationale = reporter._extract_decision_rationale(text)
+        assert "Technical indicators" in rationale
+    
+    def test_extract_rationale_fallback_after_decision(self):
+        """Test fallback when no explicit section but text follows decision."""
+        reporter = QuietModeReporter("AAPL")
+        text = """
+Action: BUY
+
+This stock shows strong momentum with increasing volume.
+The fundamentals are solid and valuation is reasonable.
+Risk-reward ratio is favorable at current levels.
+"""
+        rationale = reporter._extract_decision_rationale(text)
+        assert "strong momentum" in rationale or "fundamentals" in rationale
+    
+    def test_extract_rationale_no_section_found(self):
+        """Test fallback to first paragraphs when no clear section."""
+        reporter = QuietModeReporter("AAPL")
+        text = """
+The analysis reveals positive indicators.
+
+Strong buy signals present across multiple timeframes.
+"""
+        rationale = reporter._extract_decision_rationale(text)
+        assert len(rationale) > 0
+    
+    def test_extract_rationale_empty_text(self):
+        """Test extraction from empty text."""
+        reporter = QuietModeReporter("AAPL")
+        rationale = reporter._extract_decision_rationale("")
+        assert rationale == ""
+    
+    def test_extract_rationale_from_list(self):
+        """Test extraction when input is list."""
+        reporter = QuietModeReporter("AAPL")
+        text_list = ["Preamble", "RATIONALE: Key reasons here"]
+        rationale = reporter._extract_decision_rationale(text_list)
+        assert "Key reasons" in rationale
 
 
 class TestCleanText:
@@ -364,6 +443,249 @@ class TestGenerateReport:
         assert "Risk Assessment" in report
 
 
+class TestBriefMode:
+    """Test brief_mode functionality for --brief flag."""
+    
+    def test_brief_mode_basic(self):
+        """Test brief mode outputs only header, summary, and rationale."""
+        reporter = QuietModeReporter("AAPL", "Apple Inc.")
+        result_dict = {
+            'final_trade_decision': '''
+Action: BUY
+
+Executive summary text here.
+
+DECISION RATIONALE: Strong fundamentals with positive momentum.
+The valuation is attractive at current levels.
+''',
+            'market_report': 'RSI: 45 - Oversold',
+            'fundamentals_report': 'P/E: 25 - Reasonable',
+            'sentiment_report': 'Bullish',
+            'news_report': 'Product launch next week'
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Should contain header and summary
+        assert "AAPL" in report
+        assert "Apple Inc." in report
+        assert "BUY" in report
+        assert "Executive Summary" in report
+        
+        # Should contain rationale
+        assert "Decision Rationale" in report
+        assert "Strong fundamentals" in report
+        
+        # Should NOT contain full sections
+        assert "Technical Analysis" not in report
+        assert "Fundamental Analysis" not in report
+        assert "Market Sentiment" not in report
+        assert "News & Catalysts" not in report
+        
+        # Should indicate brief mode in footer
+        assert "Brief Mode" in report
+    
+    def test_brief_mode_vs_full_mode(self):
+        """Test brief mode is significantly shorter than full mode."""
+        reporter = QuietModeReporter("TSLA")
+        result_dict = {
+            'final_trade_decision': 'Action: SELL\n\nRATIONALE: Overvalued currently.',
+            'market_report': 'Technical indicators suggest overbought conditions with RSI at 75.',
+            'fundamentals_report': 'P/E ratio of 150 significantly above sector average.',
+            'sentiment_report': 'Mixed sentiment with institutional selling pressure.',
+            'news_report': 'Recent earnings miss and guidance reduction.',
+            'investment_plan': 'Recommend taking profits at current levels.',
+            'trader_investment_plan': 'Exit positions above $250 with stop loss at $275.'
+        }
+        
+        brief_report = reporter.generate_report(result_dict, brief_mode=True)
+        full_report = reporter.generate_report(result_dict, brief_mode=False)
+        
+        # Brief should be significantly shorter
+        assert len(brief_report) < len(full_report) * 0.5
+        
+        # Both should have header
+        assert "TSLA" in brief_report
+        assert "TSLA" in full_report
+        
+        # Only full should have detailed sections
+        assert "Technical Analysis" in full_report
+        assert "Technical Analysis" not in brief_report
+    
+    def test_brief_mode_without_rationale_section(self):
+        """Test brief mode when no explicit rationale section exists."""
+        reporter = QuietModeReporter("NVDA")
+        result_dict = {
+            'final_trade_decision': '''
+Action: BUY
+
+Strong performance across all metrics with clear growth trajectory.
+Market positioning is excellent and valuation remains attractive.
+''',
+            'market_report': 'Bullish technical setup'
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Should still have basic structure
+        assert "NVDA" in report
+        assert "BUY" in report
+        assert "Executive Summary" in report
+        
+        # Should attempt to extract rationale from text
+        assert "Decision Rationale" in report
+        # Should have some rationale content
+        assert len(report) > 100
+    
+    def test_brief_mode_minimal_data(self):
+        """Test brief mode with minimal result data."""
+        reporter = QuietModeReporter("AMD")
+        result_dict = {
+            'final_trade_decision': 'Action: HOLD'
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Should still generate valid report
+        assert "AMD" in report
+        assert "HOLD" in report
+        assert "---" in report  # Separators
+        assert "Brief Mode" in report
+    
+    def test_brief_mode_with_list_input(self):
+        """Test brief mode handles LangGraph list accumulation."""
+        reporter = QuietModeReporter("INTC")
+        result_dict = {
+            'final_trade_decision': [
+                'Analysis part 1',
+                'Action: BUY',
+                'RATIONALE: Strong technical setup with fundamental support.'
+            ]
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        assert "INTC" in report
+        assert "BUY" in report
+        assert "Strong technical setup" in report
+        assert "Brief Mode" in report
+    
+    def test_quiet_mode_remains_full_report(self):
+        """Test that --quiet (without --brief) still generates full report."""
+        reporter = QuietModeReporter("MSFT", "Microsoft")
+        result_dict = {
+            'final_trade_decision': 'Action: BUY\n\nRATIONALE: Good value.',
+            'market_report': 'Technical analysis here',
+            'fundamentals_report': 'Fundamental analysis here',
+            'sentiment_report': 'Sentiment analysis here'
+        }
+        
+        # Quiet mode (brief_mode=False, which is default)
+        report = reporter.generate_report(result_dict, brief_mode=False)
+        
+        # Should contain all sections
+        assert "Technical Analysis" in report
+        assert "Fundamental Analysis" in report
+        assert "Market Sentiment" in report
+        
+        # Should NOT have Brief Mode indicator
+        assert "Brief Mode" not in report
+    
+    def test_brief_mode_preserves_executive_summary(self):
+        """Test brief mode always includes executive summary."""
+        reporter = QuietModeReporter("GOOGL")
+        result_dict = {
+            'final_trade_decision': '''
+Action: SELL
+
+### Executive Summary
+The company faces significant headwinds with declining margins
+and increasing competitive pressure. Current valuation does not
+justify the elevated risk profile.
+
+RATIONALE: Risk-reward unfavorable.
+'''
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Executive summary should be present
+        assert "Executive Summary" in report
+        assert "significant headwinds" in report
+        assert "declining margins" in report
+        
+        # Rationale should be present
+        assert "Decision Rationale" in report
+        assert "Risk-reward" in report
+
+
+class TestBriefAndQuietInteraction:
+    """Test interaction between --brief and --quiet flags."""
+    
+    def test_brief_outputs_less_than_quiet(self):
+        """Test --brief produces less output than --quiet."""
+        reporter = QuietModeReporter("AAPL")
+        result_dict = {
+            'final_trade_decision': 'Action: BUY\n\nRATIONALE: Good entry point.',
+            'market_report': 'Technical analysis with multiple indicators and detailed chart patterns.',
+            'fundamentals_report': 'Detailed fundamental metrics including revenue, earnings, margins.',
+            'sentiment_report': 'Social media sentiment and institutional positioning analysis.',
+            'news_report': 'Recent news including earnings reports and analyst upgrades.'
+        }
+        
+        quiet_report = reporter.generate_report(result_dict, brief_mode=False)
+        brief_report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Brief should be shorter
+        assert len(brief_report) < len(quiet_report)
+        
+        # Quiet has all sections
+        assert "Technical Analysis" in quiet_report
+        
+        # Brief does not
+        assert "Technical Analysis" not in brief_report
+    
+    def test_both_suppress_logging(self):
+        """Test both --brief and --quiet suppress logging equally."""
+        # Both modes should work with suppressed logging
+        # This is tested at the main.py level, but we verify reporter works in both
+        reporter = QuietModeReporter("TEST")
+        result = {'final_trade_decision': 'Action: HOLD'}
+        
+        # Should not raise exceptions
+        brief = reporter.generate_report(result, brief_mode=True)
+        quiet = reporter.generate_report(result, brief_mode=False)
+        
+        assert "TEST" in brief
+        assert "TEST" in quiet
+    
+    def test_brief_markdown_still_valid(self):
+        """Test --brief output is still valid markdown."""
+        reporter = QuietModeReporter("NVDA", "NVIDIA")
+        result_dict = {
+            'final_trade_decision': '''
+Action: BUY
+
+Strong AI positioning with data center dominance.
+
+RATIONALE: Market leader with pricing power and strong demand outlook.
+'''
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        # Should have markdown headers
+        assert report.startswith("# ")
+        assert "##" in report
+        
+        # Should have horizontal rules
+        assert "---" in report
+        
+        # Should have proper structure
+        lines = report.split('\n')
+        assert lines[0].startswith("# NVDA")
+
+
 class TestSuppressLogging:
     """Test suppress_logging() function."""
     
@@ -395,6 +717,16 @@ class TestEdgeCases:
         report = reporter.generate_report(result_dict)
         
         # Should handle unicode without crashing
+        assert "NFLX" in report
+    
+    def test_unicode_in_brief_mode(self):
+        """Test unicode handling in brief mode."""
+        reporter = QuietModeReporter("NFLX")
+        result_dict = {
+            'final_trade_decision': 'Action: BUY 🚀\n\nRATIONALE: Strong momentum 📈'
+        }
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
         assert "NFLX" in report
     
     def test_very_long_report(self):
@@ -434,6 +766,17 @@ class TestEdgeCases:
         # Should still generate basic structure
         assert "ORCL" in report
         assert "HOLD" in report  # Default decision
+    
+    def test_empty_result_dict_brief_mode(self):
+        """Test empty result dict in brief mode."""
+        reporter = QuietModeReporter("ORCL")
+        result_dict = {}
+        
+        report = reporter.generate_report(result_dict, brief_mode=True)
+        
+        assert "ORCL" in report
+        assert "HOLD" in report
+        assert "Brief Mode" in report
     
     def test_malformed_decision_format(self):
         """Test various malformed decision formats."""
@@ -511,3 +854,46 @@ ADJUSTED_HEALTH_SCORE: 70% (based on 10 available points)
         assert "HOLD" in report
         assert "DATA_BLOCK" in report
         assert "Liquidity" in report
+    
+    def test_realistic_brief_scenario(self):
+        """Test realistic scenario with brief mode."""
+        reporter = QuietModeReporter("0005.HK", "HSBC Holdings")
+        result_dict = {
+            'final_trade_decision': '''
+### FINAL DECISION: HOLD
+
+Executive summary of analysis findings here.
+
+DECISION RATIONALE: Analyst coverage below threshold (16 vs required 20).
+Financial health data incomplete. Liquidity meets requirements.
+Default SELL overridden to HOLD pending data completion.
+
+### THESIS COMPLIANCE SUMMARY
+- Financial Health: [DATA MISSING]
+- Analyst Coverage: 16 - FAIL
+''',
+            'fundamentals_report': 'Detailed fundamental analysis with metrics',
+            'market_report': 'Technical analysis with indicators',
+            'sentiment_report': 'Sentiment from multiple sources',
+            'news_report': 'Recent news and developments'
+        }
+        
+        brief = reporter.generate_report(result_dict, brief_mode=True)
+        full = reporter.generate_report(result_dict, brief_mode=False)
+        
+        # Brief should have header and rationale
+        assert "0005.HK" in brief
+        assert "HOLD" in brief
+        assert "Decision Rationale" in brief
+        assert "Analyst coverage below threshold" in brief
+        
+        # Brief should NOT have detailed sections
+        assert "Technical Analysis" not in brief
+        assert "Fundamental Analysis" not in brief
+        
+        # Full should have everything
+        assert "Technical Analysis" in full
+        assert "Fundamental Analysis" in full
+        
+        # Brief should be significantly shorter
+        assert len(brief) < len(full)

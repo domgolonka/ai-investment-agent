@@ -63,6 +63,9 @@ Examples:
   # Quiet mode (markdown report only)
   python -m src.main --ticker AAPL --quiet
   
+  # Brief mode (header, summary, decision only)
+  python -m src.main --ticker AAPL --brief
+  
   # Custom models
   python -m src.main --ticker TSLA --quick-model gemini-2.5-flash --deep-model gemini-3-pro-preview
   
@@ -88,6 +91,12 @@ Examples:
         "--quiet",
         action="store_true",
         help="Suppress all logging and output only final markdown report"
+    )
+    
+    parser.add_argument(
+        "--brief",
+        action="store_true",
+        help="Output only header, executive summary, and decision rationale"
     )
     
     parser.add_argument(
@@ -422,7 +431,7 @@ async def main():
     try:
         args = parse_arguments()
         
-        if args.quiet:
+        if args.quiet or args.brief:
             suppress_all_logging()
         
         if args.quick_model:
@@ -433,7 +442,7 @@ async def main():
         if args.no_memory:
             config.enable_memory = False
         
-        if args.verbose and not args.quiet:
+        if args.verbose and not args.quiet and not args.brief:
             logging.getLogger().setLevel(logging.DEBUG)
             for name in logging.root.manager.loggerDict:
                 logging.getLogger(name).setLevel(logging.DEBUG)
@@ -441,20 +450,20 @@ async def main():
         try:
             validate_environment_variables()
         except ValueError as e:
-            if args.quiet:
+            if args.quiet or args.brief:
                 print(f"# Configuration Error\n\n{str(e)}")
             else:
                 console.print(f"\n[bold red]Configuration Error:[/bold red] {str(e)}\n")
                 console.print("Please check your .env file and ensure all required API keys are set.\n")
             sys.exit(1)
         
-        if not args.quiet:
+        if not args.quiet and not args.brief:
             display_welcome_banner(args.ticker, args.quick)
         
         result = await run_analysis(args.ticker, args.quick)
         
         if result:
-            if args.quiet:
+            if args.brief or args.quiet:
                 company_name = None
                 try:
                     import yfinance as yf
@@ -465,37 +474,37 @@ async def main():
                     pass
                 
                 reporter = QuietModeReporter(args.ticker, company_name)
-                report = reporter.generate_report(result)
+                report = reporter.generate_report(result, brief_mode=args.brief)
                 print(report)
             else:
                 display_results(result)
             
             try:
                 filepath = save_results_to_file(result, args.ticker)
-                if not args.quiet:
+                if not args.quiet and not args.brief:
                     console.print(f"\n[green]Results saved to:[/green] [cyan]{filepath}[/cyan]\n")
             except Exception as e:
                 logger.error(f"Failed to save results: {e}")
-                if not args.quiet:
+                if not args.quiet and not args.brief:
                     console.print(f"\n[yellow]Warning: Could not save results to file: {e}[/yellow]\n")
             
             sys.exit(0)
         else:
-            if args.quiet:
+            if args.quiet or args.brief:
                 print("# Analysis Failed\n\nAn error occurred during analysis. Check logs for details.")
             else:
                 console.print("\n[bold red]Analysis failed. Check logs for details.[/bold red]\n")
             sys.exit(1)
             
     except KeyboardInterrupt:
-        if args and args.quiet:
+        if args and (args.quiet or args.brief):
             pass
         else:
             console.print("\n[yellow]Analysis interrupted by user.[/yellow]\n")
         sys.exit(130)
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        if args and args.quiet:
+        if args and (args.quiet or args.brief):
             print(f"# Unexpected Error\n\n{str(e)}")
         else:
             console.print(f"\n[bold red]Unexpected error:[/bold red] {str(e)}\n")
