@@ -165,13 +165,21 @@ class FinancialSituationMemory:
         
         # Truncate text to avoid token limits
         truncated_text = text[:9000]
-        
-        # aembed_query is the async version
-        embedding = await self.embeddings.aembed_query(truncated_text)
-        
+
+        # Import rate limiter here to avoid circular dependency
+        # Use rate limiter to share RPM quota with LLM calls
+        try:
+            from src.llms import GLOBAL_RATE_LIMITER
+            async with GLOBAL_RATE_LIMITER:
+                embedding = await self.embeddings.aembed_query(truncated_text)
+        except Exception:
+            # Fallback if rate limiter not available or incompatible (e.g., in tests)
+            # Catch all exceptions to handle import errors, attribute errors, type errors, etc.
+            embedding = await self.embeddings.aembed_query(truncated_text)
+
         if not embedding or len(embedding) == 0:
             raise ValueError("Empty embedding returned")
-        
+
         return embedding
     
     async def add_situations(

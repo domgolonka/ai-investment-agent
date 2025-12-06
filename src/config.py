@@ -103,7 +103,12 @@ class Config:
     api_timeout: int = int(os.environ.get("API_TIMEOUT", "300"))
     # Retries from 3 -> 10 to aggressively handle 504/503 transient errors
     api_retry_attempts: int = int(os.environ.get("API_RETRY_ATTEMPTS", "10"))
-    
+
+    # Rate limiting configuration (requests per minute)
+    # Free tier: 15 RPM  | Paid tier (Tier 1): 360 RPM | Tier 2: 1000+ RPM
+    # Default: 15 RPM (free tier) - Set GEMINI_RPM_LIMIT in .env to override
+    gemini_rpm_limit: int = int(os.environ.get("GEMINI_RPM_LIMIT", "15"))
+
     chroma_persist_directory: str = os.environ.get("CHROMA_PERSIST_DIR", "./chroma_db")
     environment: str = os.environ.get("ENVIRONMENT", "dev")
     

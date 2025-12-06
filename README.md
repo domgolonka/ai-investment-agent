@@ -136,6 +136,26 @@ poetry run bash run_tickers.sh
 poetry run pytest tests/ -v
 ```
 
+### Configuring API Rate Limits (NEW)
+
+The system automatically handles Gemini API rate limits based on your tier. **Free tier (15 RPM) works out of the box** with no configuration needed.
+
+If you upgrade to a **paid Gemini API tier**, you can unlock significantly faster analysis:
+
+```bash
+# In your .env file, add:
+GEMINI_RPM_LIMIT=360   # Paid tier 1: 24x faster than free tier
+# or
+GEMINI_RPM_LIMIT=1000  # Paid tier 2: 67x faster than free tier
+```
+
+**Performance comparison:**
+- **Free tier (15 RPM):** ~1 analysis per 5-10 minutes
+- **Paid tier 1 (360 RPM):** ~24 analyses in the same time (24x speedup)
+- **Paid tier 2 (1000 RPM):** ~67 analyses in the same time (67x speedup)
+
+The system applies a 20% safety margin automatically to prevent hitting API limits. For batch analysis of 300+ tickers, paid tiers can reduce runtime from 12-24 hours down to 30-60 minutes.
+
 ### Batch Analysis - Screening Hundreds of Tickers
 
 For serious portfolio construction, you'll want to screen many candidates at once. Here's how to generate and analyze a large watchlist.

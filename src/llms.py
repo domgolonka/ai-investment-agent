@@ -2,6 +2,7 @@
 LLM configuration and initialization module.
 Updated for Google Gemini 3 with Safety Settings and Rate Limiting.
 Includes token tracking for cost monitoring.
+UPDATED: Configurable rate limits via GEMINI_RPM_LIMIT environment variable.
 """
 
 import logging
@@ -22,14 +23,47 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
 }
 
-# Global rate limiter: 10 requests per minute (conservative for free tier)
-# Adjust 'requests_per_second' based on your actual tier.
-# Free tier is ~15 RPM, so 0.25 rps (1 request every 4 seconds) is safe across parallel agents.
-GLOBAL_RATE_LIMITER = InMemoryRateLimiter(
-    requests_per_second=0.25,  
-    check_every_n_seconds=0.1,
-    max_bucket_size=10
-)
+# Configurable rate limiter based on Gemini API tier
+# Tier detection via GEMINI_RPM_LIMIT environment variable:
+#   - Free tier: 15 RPM (default)
+#   - Paid tier 1: 360 RPM (set GEMINI_RPM_LIMIT=360)
+#   - Paid tier 2: 1000 RPM (set GEMINI_RPM_LIMIT=1000)
+#
+# Rate limiter settings are calculated to be conservative:
+# - RPS = RPM / 60 (convert to requests per second)
+# - Reduce by 20% for safety margin to avoid hitting limits
+# - max_bucket_size allows brief bursts without throttling
+
+def _create_rate_limiter_from_rpm(rpm: int) -> InMemoryRateLimiter:
+    """
+    Create a rate limiter from RPM (requests per minute) setting.
+
+    Args:
+        rpm: Target requests per minute (e.g., 15 for free tier, 360 for paid)
+
+    Returns:
+        Configured InMemoryRateLimiter
+    """
+    # Convert RPM to RPS with 20% safety margin
+    safety_factor = 0.8  # Use 80% of limit to avoid edge cases
+    rps = (rpm / 60.0) * safety_factor
+
+    # Bucket size: allow bursts up to 10% of RPM for parallel agent execution
+    max_bucket = max(5, int(rpm * 0.1))
+
+    logger.info(
+        f"Rate limiter configured: {rpm} RPM → {rps:.2f} RPS "
+        f"(80% of limit, bucket size: {max_bucket})"
+    )
+
+    return InMemoryRateLimiter(
+        requests_per_second=rps,
+        check_every_n_seconds=0.1,
+        max_bucket_size=max_bucket
+    )
+
+# Initialize global rate limiter from config
+GLOBAL_RATE_LIMITER = _create_rate_limiter_from_rpm(config.gemini_rpm_limit)
 
 def create_gemini_model(
     model_name: str,

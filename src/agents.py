@@ -4,9 +4,11 @@ FIXED: All data passing issues - agents now receive complete reports.
 ADDED: Debug logging to track data flow.
 FIXED: Memory retrieval now contextualized per ticker to prevent cross-contamination.
 UPDATED (Pass 3 Fixes): Added Negative Constraint to prompts and strict metadata filtering.
+UPDATED: Added explicit 429/ResourceExhausted handling for Gemini free tier.
 """
 
 import asyncio
+import os
 from typing import Annotated, List, Dict, Any, Optional, Set, Callable
 from typing_extensions import TypedDict
 from datetime import datetime
@@ -19,6 +21,73 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# --- Rate Limit Handling ---
+
+async def invoke_with_rate_limit_handling(
+    runnable,
+    input_data: Dict[str, Any],
+    max_attempts: int = 3,
+    context: str = "LLM"
+) -> Any:
+    """
+    Invoke LLM with explicit 429/ResourceExhausted handling for free tier.
+
+    This wrapper adds extended backoff (60-180s) beyond LangChain's default retry logic,
+    which maxes out at ~60s. Critical for Gemini free tier (15 RPM).
+
+    Args:
+        runnable: LangChain runnable (LLM, chain, etc.)
+        input_data: Input dictionary for runnable
+        max_attempts: Number of attempts at this wrapper level (default 3)
+        context: Description for logging (e.g., "Market Analyst")
+
+    Returns:
+        Result from runnable.ainvoke()
+
+    Raises:
+        Exception: Re-raises if not a rate limit error or after max attempts
+    """
+    quiet_mode = os.environ.get("QUIET_MODE", "false").lower() == "true"
+
+    for attempt in range(max_attempts):
+        try:
+            return await runnable.ainvoke(input_data)
+        except Exception as e:
+            error_str = str(e).lower()
+            error_type = type(e).__name__
+
+            # Detect rate limit errors (429, ResourceExhausted, quota exceeded)
+            is_rate_limit = any([
+                "429" in error_str,
+                "rate limit" in error_str,
+                "quota" in error_str,
+                "resourceexhausted" in error_str,
+                "resource exhausted" in error_str,
+                "too many requests" in error_str
+            ])
+
+            if is_rate_limit and attempt < max_attempts - 1:
+                # Extended exponential backoff: 60s, 120s, 180s
+                wait_time = 60 * (attempt + 1)
+
+                # Log unless in quiet mode
+                if not quiet_mode:
+                    logger.warning(
+                        "rate_limit_detected",
+                        context=context,
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        wait_seconds=wait_time,
+                        error_type=error_type,
+                        error_message=str(e)[:200]  # Truncate long errors
+                    )
+
+                await asyncio.sleep(wait_time)
+                continue  # Retry
+
+            # Not a rate limit error, or final attempt - re-raise
+            raise
 
 # --- State Definitions ---
 class InvestDebateState(TypedDict):
@@ -131,7 +200,13 @@ def create_analyst_node(llm, agent_key: str, tools: List[Any], output_field: str
             # CRITICAL FIX: Include verified company name to prevent hallucination
             full_system_instruction = f"{agent_prompt.system_message}\n\nDate: {current_date}\nTicker: {ticker}\nCompany: {company_name}\n{get_analysis_context(ticker)}{extra_context}"
             invocation_messages = [SystemMessage(content=full_system_instruction)] + filtered_messages
-            response = await runnable.ainvoke({"messages": invocation_messages})
+
+            # Use rate limit handling wrapper for free tier support
+            response = await invoke_with_rate_limit_handling(
+                runnable,
+                {"messages": invocation_messages},
+                context=agent_prompt.agent_name
+            )
             new_state = {"sender": agent_key, "messages": [response], "prompts_used": prompts_used}
             
             # Check for tool calls
@@ -205,7 +280,12 @@ Only use data explicitly related to {ticker} ({company_name}).
 
         prompt = f"""{agent_prompt.system_message}\n{negative_constraint}\n\nREPORTS:\n{reports}\n{past_insights}\n\nDEBATE HISTORY:\n{history}\n\nProvide your argument."""
         try:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            # Use rate limit handling wrapper for free tier support
+            response = await invoke_with_rate_limit_handling(
+                llm,
+                [HumanMessage(content=prompt)],
+                context=agent_name
+            )
             debate_state = state.get('investment_debate_state', {}).copy()
             argument = f"{agent_name}: {response.content}"
             debate_state['history'] = debate_state.get('history', '') + f"\n\n{argument}"
@@ -230,7 +310,11 @@ def create_research_manager_node(llm, memory: Optional[Any]) -> Callable:
         all_reports = f"""MARKET ANALYST REPORT:\n{state.get('market_report', 'N/A')}\n\nSENTIMENT ANALYST REPORT:\n{state.get('sentiment_report', 'N/A')}\n\nNEWS ANALYST REPORT:\n{state.get('news_report', 'N/A')}\n\nFUNDAMENTALS ANALYST REPORT:\n{state.get('fundamentals_report', 'N/A')}\n\nBULL RESEARCHER:\n{debate.get('bull_history', 'N/A')}\n\nBEAR RESEARCHER:\n{debate.get('bear_history', 'N/A')}"""
         prompt = f"""{agent_prompt.system_message}\n\n{all_reports}\n\nProvide Investment Plan."""
         try:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await invoke_with_rate_limit_handling(
+                llm,
+                [HumanMessage(content=prompt)],
+                context=agent_prompt.agent_name
+            )
             return {"investment_plan": response.content}
         except Exception as e:
             return {"investment_plan": f"Error: {str(e)}"}
@@ -245,7 +329,11 @@ def create_trader_node(llm, memory: Optional[Any]) -> Callable:
         all_input = f"""MARKET ANALYST REPORT:\n{state.get('market_report', 'N/A')}\n\nFUNDAMENTALS ANALYST REPORT:\n{state.get('fundamentals_report', 'N/A')}\n\nRESEARCH MANAGER PLAN:\n{state.get('investment_plan', 'N/A')}"""
         prompt = f"""{agent_prompt.system_message}\n\n{all_input}\n\nCreate Trading Plan."""
         try:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await invoke_with_rate_limit_handling(
+                llm,
+                [HumanMessage(content=prompt)],
+                context=agent_prompt.agent_name
+            )
             return {"trader_investment_plan": response.content}
         except Exception as e:
             return {"trader_investment_plan": f"Error: {str(e)}"}
@@ -262,7 +350,11 @@ def create_risk_debater_node(llm, agent_key: str) -> Callable:
             return {"risk_debate_state": risk_state}
         prompt = f"""{agent_prompt.system_message}\n\nTRADER PLAN: {state.get('trader_investment_plan')}\n\nProvide risk assessment."""
         try:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await invoke_with_rate_limit_handling(
+                llm,
+                [HumanMessage(content=prompt)],
+                context=agent_prompt.agent_name
+            )
             risk_state = state.get('risk_debate_state', {}).copy()
             risk_state['history'] += f"\n{agent_prompt.agent_name}: {response.content}\n"
             risk_state['count'] += 1
@@ -288,7 +380,11 @@ def create_portfolio_manager_node(llm, memory: Optional[Any]) -> Callable:
         all_context = f"""MARKET ANALYST REPORT:\n{market if market else 'N/A'}\n\nSENTIMENT ANALYST REPORT:\n{sentiment if sentiment else 'N/A'}\n\nNEWS ANALYST REPORT:\n{news if news else 'N/A'}\n\nFUNDAMENTALS ANALYST REPORT:\n{fundamentals if fundamentals else 'N/A'}\n\nRESEARCH MANAGER RECOMMENDATION:\n{inv_plan if inv_plan else 'N/A'}\n\nTRADER PROPOSAL:\n{trader if trader else 'N/A'}\n\nRISK TEAM DEBATE:\n{risk if risk else 'N/A'}"""
         prompt = f"""{agent_prompt.system_message}\n\n{all_context}\n\nMake Final Decision."""
         try:
-            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            response = await invoke_with_rate_limit_handling(
+                llm,
+                [HumanMessage(content=prompt)],
+                context=agent_prompt.agent_name
+            )
             return {"final_trade_decision": response.content}
         except Exception as e:
             logger.error(f"PM error: {str(e)}")

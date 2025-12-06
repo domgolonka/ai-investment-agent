@@ -565,6 +565,9 @@ async def main():
             tracker = TokenTracker()
             tracker._quiet_mode = True
 
+            # Set environment variable for rate limit handler to check
+            os.environ["QUIET_MODE"] = "true"
+
         if args.quick_model:
             config.quick_think_llm = args.quick_model
         if args.deep_model:
