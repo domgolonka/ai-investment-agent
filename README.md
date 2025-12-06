@@ -219,6 +219,10 @@ caffeinate -i ./scripts/run_tickers.sh
 - 100 tickers: ~4-8 hours (standard mode) or ~2-4 hours (quick mode)
 - 300+ tickers: ~12-24 hours (standard mode) or ~6-12 hours (quick mode)
 
+Note that quick mode, if you configure with gemini-2.5-flash (see .env) yields low-quality results.
+
+To assess costs, run:  ```bash examples/check_token_costs.py```
+
 **💡 Pro tip for macOS users:**
 The `caffeinate -i` command prevents your Mac from sleeping while the analysis runs. Without it, your laptop may sleep and pause the analysis.
 

@@ -149,13 +149,14 @@ class TestCreateQuickThinkingLLM:
         mock_create.return_value = mock_instance
         
         result = create_quick_thinking_llm()
-        
+
         assert result == mock_instance
         mock_create.assert_called_once_with(
             "gemini-2.5-flash",
             0.3,  # Default temperature
             300,  # From config
-            10    # From config
+            10,   # From config
+            callbacks=None  # Default callbacks
         )
     
     @patch('src.llms.create_gemini_model')
@@ -235,13 +236,14 @@ class TestCreateDeepThinkingLLM:
         mock_create.return_value = mock_instance
         
         result = create_deep_thinking_llm()
-        
+
         assert result == mock_instance
         mock_create.assert_called_once_with(
             "gemini-3-pro-preview",
             0.1,  # Default temperature (lower for deep thinking)
             300,
-            10
+            10,
+            callbacks=None  # Default callbacks
         )
     
     @patch('src.llms.create_gemini_model')
@@ -275,12 +277,13 @@ class TestCreateDeepThinkingLLM:
             timeout=900,
             max_retries=20
         )
-        
+
         mock_create.assert_called_once_with(
             "custom-model",
             0.5,
             900,
-            20
+            20,
+            callbacks=None  # Default callbacks
         )
 
 

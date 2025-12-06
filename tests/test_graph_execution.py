@@ -112,26 +112,32 @@ class TestTradingContext:
 
 class TestGraphCompilation:
     """Test graph compilation."""
-    
-    @patch('src.graph.quick_thinking_llm')
-    @patch('src.graph.deep_thinking_llm')
+
+    @patch('src.graph.create_quick_thinking_llm')
+    @patch('src.graph.create_deep_thinking_llm')
     @patch('src.graph.toolkit')
-    def test_create_trading_graph(self, mock_toolkit, mock_deep_llm, mock_quick_llm):
+    def test_create_trading_graph(self, mock_toolkit, mock_deep_llm_func, mock_quick_llm_func):
         """Test trading graph creation."""
         from src.graph import create_trading_graph
-        
+
+        # Mock the LLM creation functions to return mock LLMs
+        mock_quick_llm = MagicMock()
+        mock_deep_llm = MagicMock()
+        mock_quick_llm_func.return_value = mock_quick_llm
+        mock_deep_llm_func.return_value = mock_deep_llm
+
         mock_toolkit.get_technical_tools.return_value = []
         mock_toolkit.get_sentiment_tools.return_value = []
         mock_toolkit.get_news_tools.return_value = []
         mock_toolkit.get_fundamental_tools.return_value = []
         mock_toolkit.get_all_tools.return_value = []
-        
+
         graph = create_trading_graph(
             max_debate_rounds=2,
             max_risk_discuss_rounds=1,
             enable_memory=True
         )
-        
+
         assert graph is not None
         # Graph should be compiled and ready to invoke
 

@@ -30,6 +30,8 @@ import json
 
 from src.config import config, validate_environment_variables
 from src.report_generator import QuietModeReporter
+# IMPORTANT: Don't import get_tracker here - it instantiates the singleton immediately
+# Import it lazily in functions that need it, after quiet mode is set
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -43,6 +45,17 @@ def suppress_all_logging():
         logging.getLogger(name).propagate = False
     for logger_name in ['httpx', 'openai', 'httpcore', 'langchain', 'langgraph', 'google']:
         logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+
+    # Suppress structlog (used by token_tracker)
+    import structlog
+    structlog.configure(
+        processors=[],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
     import warnings
     warnings.filterwarnings('ignore')
 
@@ -185,10 +198,69 @@ def display_memory_statistics():
         logger.warning(f"Could not display memory statistics: {e}")
 
 
+def display_token_summary():
+    """Display token usage summary in a formatted table."""
+    from src.token_tracker import get_tracker
+    tracker = get_tracker()
+    stats = tracker.get_total_stats()
+
+    if stats['total_calls'] == 0:
+        return
+
+    console.print("\n[bold cyan]Token Usage Summary:[/bold cyan]\n")
+
+    # Overall stats table
+    summary_table = Table(show_header=True, box=box.ROUNDED)
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="green", justify="right")
+
+    summary_table.add_row("Total LLM Calls", str(stats['total_calls']))
+    summary_table.add_row("Total Prompt Tokens", f"{stats['total_prompt_tokens']:,}")
+    summary_table.add_row("Total Completion Tokens", f"{stats['total_completion_tokens']:,}")
+    summary_table.add_row("Total Tokens", f"{stats['total_tokens']:,}")
+    summary_table.add_row("Projected Cost (Paid Tier)", f"${stats['total_cost_usd']:.4f}")
+
+    console.print(summary_table)
+
+    # Per-agent breakdown
+    console.print("\n[bold cyan]Per-Agent Token Usage:[/bold cyan]\n")
+
+    agent_table = Table(show_header=True, box=box.ROUNDED)
+    agent_table.add_column("Agent", style="cyan")
+    agent_table.add_column("Calls", style="yellow", justify="right")
+    agent_table.add_column("Prompt Tokens", style="blue", justify="right")
+    agent_table.add_column("Completion Tokens", style="magenta", justify="right")
+    agent_table.add_column("Total Tokens", style="green", justify="right")
+    agent_table.add_column("Cost (USD)", style="red", justify="right")
+
+    # Sort by cost descending
+    sorted_agents = sorted(
+        stats['agents'].items(),
+        key=lambda x: x[1]['cost_usd'],
+        reverse=True
+    )
+
+    for agent_name, agent_stats in sorted_agents:
+        agent_table.add_row(
+            agent_name,
+            str(agent_stats['calls']),
+            f"{agent_stats['prompt_tokens']:,}",
+            f"{agent_stats['completion_tokens']:,}",
+            f"{agent_stats['total_tokens']:,}",
+            f"${agent_stats['cost_usd']:.4f}"
+        )
+
+    console.print(agent_table)
+    console.print()
+
+
 def display_results(result: dict):
     """Display analysis results in a formatted manner."""
     console.print("\n" + "="*80)
     console.print("[bold green]Analysis Complete![/bold green]\n")
+
+    # Display token usage first
+    display_token_summary()
     
     # Display final trading decision
     if "final_trade_decision" in result and result["final_trade_decision"]:
@@ -280,6 +352,11 @@ def save_results_to_file(result: dict, ticker: str) -> Path:
         except Exception as e:
             logger.warning(f"Could not get memory stats: {e}")
     
+    # Get token usage stats
+    from src.token_tracker import get_tracker
+    tracker = get_tracker()
+    token_stats = tracker.get_total_stats()
+
     save_data = {
         "metadata": {
             "ticker": ticker,
@@ -292,6 +369,7 @@ def save_results_to_file(result: dict, ticker: str) -> Path:
             "online_tools_enabled": config.online_tools,
             "llm_provider": config.llm_provider
         },
+        "token_usage": token_stats,
         "prompts_metadata": {
             "prompts_used": prompts_used,
             "available_prompts": available_prompts,
@@ -332,8 +410,18 @@ def save_results_to_file(result: dict, ticker: str) -> Path:
     
     with open(filepath, 'w') as f:
         json.dump(save_data, f, indent=2)
-    
+
     logger.info(f"Results saved to {filepath} ({len(prompts_used)} prompts tracked, {len(custom_prompts_loaded)} custom)")
+
+    # Log token tracking info
+    if token_stats['total_calls'] > 0:
+        logger.info(
+            f"Token usage tracked: {token_stats['total_calls']} LLM calls, "
+            f"{token_stats['total_tokens']:,} total tokens, "
+            f"${token_stats['total_cost_usd']:.4f} projected cost (paid tier) - "
+            f"saved to {filepath}"
+        )
+
     return filepath
 
 
@@ -343,7 +431,12 @@ async def run_analysis(ticker: str, quick_mode: bool) -> Optional[dict]:
         from src.graph import create_trading_graph, TradingContext
         from src.agents import AgentState, InvestDebateState, RiskDebateState
         from langchain_core.messages import HumanMessage
-        
+        from src.token_tracker import get_tracker
+
+        # Reset token tracker for fresh analysis
+        tracker = get_tracker()
+        tracker.reset()
+
         logger.info(f"Starting analysis for {ticker} (quick_mode={quick_mode})")
         
         # CRITICAL FIX: Enforce real-world date to prevent "Time Travel" hallucinations
@@ -417,8 +510,14 @@ async def run_analysis(ticker: str, quick_mode: bool) -> Optional[dict]:
         )
         
         logger.info(f"Analysis completed for {ticker}")
+
+        # Log token usage summary
+        from src.token_tracker import get_tracker
+        tracker = get_tracker()
+        tracker.print_summary()
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Analysis failed for {ticker}: {str(e)}", exc_info=True)
         console.print(f"\n[bold red]Error during analysis:[/bold red] {str(e)}\n")
@@ -430,10 +529,19 @@ async def main():
     args = None
     try:
         args = parse_arguments()
-        
+
         if args.quiet or args.brief:
+            # Suppress token tracker logging BEFORE any imports that might initialize it
+            # CRITICAL: Must set quiet mode before importing get_tracker() or any module that uses it
+            from src.token_tracker import TokenTracker
+            TokenTracker.set_quiet_mode(True)
             suppress_all_logging()
-        
+
+            # Force re-initialization with quiet mode active
+            # (in case global_tracker was already imported elsewhere)
+            tracker = TokenTracker()
+            tracker._quiet_mode = True
+
         if args.quick_model:
             config.quick_think_llm = args.quick_model
         if args.deep_model:

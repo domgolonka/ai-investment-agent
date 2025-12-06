@@ -17,13 +17,14 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src.agents import (
-    AgentState, create_analyst_node, create_researcher_node, 
-    create_research_manager_node, create_trader_node, 
-    create_risk_debater_node, create_portfolio_manager_node, 
+    AgentState, create_analyst_node, create_researcher_node,
+    create_research_manager_node, create_trader_node,
+    create_risk_debater_node, create_portfolio_manager_node,
     create_state_cleaner_node
 )
-from src.llms import quick_thinking_llm, deep_thinking_llm
+from src.llms import create_quick_thinking_llm, create_deep_thinking_llm
 from src.toolkit import toolkit
+from src.token_tracker import TokenTrackingCallback, get_tracker
 from src.memory import (
     create_memory_instances, cleanup_all_memories,
     # Legacy imports for backwards compatibility (DEPRECATED)
@@ -198,28 +199,44 @@ def create_trading_graph(
         enable_memory=enable_memory,
         using_ticker_specific_memory=ticker is not None
     )
-    
+
+    # Create LLMs with token tracking callbacks
+    tracker = get_tracker()
+
+    market_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Market Analyst", tracker)])
+    social_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Social Analyst", tracker)])
+    news_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("News Analyst", tracker)])
+    fund_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Fundamentals Analyst", tracker)])
+    bull_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Bull Researcher", tracker)])
+    bear_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Bear Researcher", tracker)])
+    res_mgr_llm = create_deep_thinking_llm(callbacks=[TokenTrackingCallback("Research Manager", tracker)])
+    trader_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Trader", tracker)])
+    risky_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Risky Analyst", tracker)])
+    safe_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Safe Analyst", tracker)])
+    neutral_llm = create_quick_thinking_llm(callbacks=[TokenTrackingCallback("Neutral Analyst", tracker)])
+    pm_llm = create_deep_thinking_llm(callbacks=[TokenTrackingCallback("Portfolio Manager", tracker)])
+
     # Nodes
-    market = create_analyst_node(quick_thinking_llm, "market_analyst", toolkit.get_technical_tools(), "market_report")
-    social = create_analyst_node(quick_thinking_llm, "sentiment_analyst", toolkit.get_sentiment_tools(), "sentiment_report")
-    news = create_analyst_node(quick_thinking_llm, "news_analyst", toolkit.get_news_tools(), "news_report")
-    fund = create_analyst_node(quick_thinking_llm, "fundamentals_analyst", toolkit.get_fundamental_tools(), "fundamentals_report")
+    market = create_analyst_node(market_llm, "market_analyst", toolkit.get_technical_tools(), "market_report")
+    social = create_analyst_node(social_llm, "sentiment_analyst", toolkit.get_sentiment_tools(), "sentiment_report")
+    news = create_analyst_node(news_llm, "news_analyst", toolkit.get_news_tools(), "news_report")
+    fund = create_analyst_node(fund_llm, "fundamentals_analyst", toolkit.get_fundamental_tools(), "fundamentals_report")
     
     cleaner = create_state_cleaner_node()
     # Standard ToolNode initialized with all tools
     tool_node = ToolNode(toolkit.get_all_tools())
-    
+
     # Research & Execution Nodes (now using ticker-specific or legacy memories)
-    bull = create_researcher_node(quick_thinking_llm, bull_memory, "bull_researcher")
-    bear = create_researcher_node(quick_thinking_llm, bear_memory, "bear_researcher")
-    res_mgr = create_research_manager_node(deep_thinking_llm, invest_judge_memory)
-    trader = create_trader_node(quick_thinking_llm, trader_memory)
-    
+    bull = create_researcher_node(bull_llm, bull_memory, "bull_researcher")
+    bear = create_researcher_node(bear_llm, bear_memory, "bear_researcher")
+    res_mgr = create_research_manager_node(res_mgr_llm, invest_judge_memory)
+    trader = create_trader_node(trader_llm, trader_memory)
+
     # Risk Nodes
-    risky = create_risk_debater_node(quick_thinking_llm, "risky_analyst")
-    safe = create_risk_debater_node(quick_thinking_llm, "safe_analyst")
-    neutral = create_risk_debater_node(quick_thinking_llm, "neutral_analyst")
-    pm = create_portfolio_manager_node(deep_thinking_llm, risk_manager_memory)
+    risky = create_risk_debater_node(risky_llm, "risky_analyst")
+    safe = create_risk_debater_node(safe_llm, "safe_analyst")
+    neutral = create_risk_debater_node(neutral_llm, "neutral_analyst")
+    pm = create_portfolio_manager_node(pm_llm, risk_manager_memory)
 
     workflow = StateGraph(AgentState)
     

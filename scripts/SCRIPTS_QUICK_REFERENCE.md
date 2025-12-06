@@ -2,7 +2,7 @@
 
 ## Files Created (Ready to Copy to Repo)
 
-```
+```text
 /mnt/user-data/outputs/
 ├── run-analysis.sh           ✅ Safe - single ticker analysis
 ├── run_tickers.sh            ✅ Safe - batch analysis  
@@ -38,11 +38,13 @@ rm scripts/deploy.sh                       # Renamed to terraform-ops.sh
 ## Danger Levels - What Could Go Wrong
 
 ### 🟢 Green (No Danger)
+
 - **run-analysis.sh** - Worst case: wastes API credits
 - **run_tickers.sh** - Worst case: wastes API credits  
 - **check-environment.sh** - READ ONLY, no changes possible
 
 ### 🟡 Yellow (Safe with Warnings)
+
 - **setup-github-secrets.sh** - Could upload to wrong repo if --repo wrong
   - *Protection*: Requires GitHub CLI auth, shows dry-run
   
@@ -100,6 +102,7 @@ Before committing, test:
 ## Warning Headers Summary
 
 Each deployment script now has:
+
 - **Purpose statement** - What it does
 - **When to use / when NOT to use** - Clear guidance
 - **Prerequisites** - What you need first
@@ -107,7 +110,8 @@ Each deployment script now has:
 - **Safety features** - What protections exist
 
 Example:
-```
+
+```text
 ⚠️  CREATES BILLABLE RESOURCES - DO NOT RUN CASUALLY!
 Purpose: One-time setup of Terraform remote state storage
 Only use if: Deploying to Azure using Terraform
