@@ -122,15 +122,15 @@ class AgentState(MessagesState):
     trade_date: str
     sender: str
 
-    market_report: str
-    sentiment_report: str
-    news_report: str
-    fundamentals_report: str
+    market_report: Annotated[str, take_last]
+    sentiment_report: Annotated[str, take_last]
+    news_report: Annotated[str, take_last]
+    fundamentals_report: Annotated[str, take_last]
     investment_debate_state: Annotated[InvestDebateState, take_last]
-    investment_plan: str
-    trader_investment_plan: str
+    investment_plan: Annotated[str, take_last]
+    trader_investment_plan: Annotated[str, take_last]
     risk_debate_state: Annotated[RiskDebateState, take_last]
-    final_trade_decision: str
+    final_trade_decision: Annotated[str, take_last]
     tools_called: Annotated[Dict[str, Set[str]], take_last]
     prompts_used: Annotated[Dict[str, Dict[str, str]], take_last]
 

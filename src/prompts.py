@@ -660,7 +660,7 @@ Asset: [Ticker]""",
         self.prompts["fundamentals_analyst"] = AgentPrompt(
             agent_key="fundamentals_analyst",
             agent_name="Fundamentals Analyst",
-            version="6.2",
+            version="6.3",
             category="fundamental",
             requires_tools=True,
             system_message="""### CRITICAL: DATA VALIDATION
@@ -939,6 +939,107 @@ Report: "PFIC Risk: LOW / MEDIUM / HIGH"
 
 ---
 
+## SECTOR-SPECIFIC ADJUSTMENTS (Apply During Scoring)
+
+Different industries have fundamentally different financial structures. Apply these sector-specific thresholds when scoring metrics. **Document all sector adjustments applied in SECTOR_ADJUSTMENTS field.**
+
+### 1. BANKS & FINANCIAL INSTITUTIONS
+
+**Identification**: SIC codes 60xx, business description includes "bank", "banking", "financial services"
+
+**Adjustments**:
+- **D/E Ratio**: NOT APPLICABLE (their business IS leverage - skip this metric entirely)
+  → Remove 1 point from Leverage denominator (2 pts → 1 pt available)
+- **Profitability Thresholds**:
+  → ROE >12% (vs standard 15%) = 1 pt
+  → ROA >1.0% (vs standard 7%) = 1 pt
+  → Net Interest Margin >2.5% replaces Operating Margin
+- **Regulatory Capital**: Tier 1 Capital Ratio >10% (add as qualitative strength if available)
+- **Asset Quality**: NPL Ratio <3% (add as qualitative strength if available)
+
+**Rationale**: Banks operate on leverage by design. Focus shifts to capital adequacy, asset quality, and return metrics.
+
+### 2. UTILITIES (Electric, Gas, Water)
+
+**Identification**: SIC codes 49xx, business description includes "utility", "electric", "gas", "water"
+
+**Adjustments**:
+- **D/E Ratio**: <2.0 acceptable (vs standard 0.8) = 1 pt
+- **ROE Threshold**: >8% acceptable (vs standard 15%) = 1 pt
+- **Cash Flow**: Regulated utilities have predictable cash flows
+  → Positive FCF = 1 pt (maintain standard)
+  → FCF Yield >3% (vs standard 4%) = 1 pt
+- **Valuation**: P/B <1.8 acceptable (vs standard 1.4) = 1 pt
+
+**Rationale**: Regulated entities have lower margins but stable cash flows. Higher leverage is industry norm due to capital-intensive infrastructure.
+
+### 3. REITs (Real Estate Investment Trusts)
+
+**Identification**: Business description includes "REIT", "real estate investment trust", or SEC filing indicates REIT structure
+
+**Adjustments**:
+- **D/E Ratio**: <1.5 acceptable (vs standard 0.8) = 1 pt
+- **Earnings Metrics**: Use FFO (Funds From Operations) or AFFO (Adjusted FFO) instead of Net Income if available
+  → FFO/Share growth >5% = 1 pt (replaces EPS growth)
+- **Cash Flow**: REITs must distribute 90% of income
+  → Dividend Yield >4% = 1 pt (replaces FCF Yield in scoring)
+- **Valuation**: P/FFO <15 (replaces P/E) = 1 pt
+
+**Rationale**: REITs have unique accounting (depreciation distorts earnings). FFO better reflects cash-generating ability. Leverage is structural due to real estate financing.
+
+### 4. SHIPPING & CYCLICAL COMMODITIES
+
+**Identification**: SIC codes 44xx (shipping), 10xx-14xx (mining, oil & gas extraction), business description includes "shipping", "tanker", "dry bulk", "commodity"
+
+**Adjustments**:
+- **Multi-Year Averaging**: Use 5-year averages for profitability and cash flow metrics to smooth cyclical volatility
+  → 5Y Avg ROE >10% (vs TTM 15%) = 1 pt
+  → 5Y Avg Operating Margin >8% (vs TTM 12%) = 1 pt
+- **Leverage**: D/E <1.2 acceptable (capital-intensive) = 1 pt
+- **Cycle Awareness**: Document current cycle position (trough, recovery, peak, decline)
+- **Valuation**: P/B <1.0 during downturns acceptable (asset value focus)
+
+**Rationale**: Cyclical businesses have extreme earnings volatility. Multi-year averaging prevents penalizing companies at cycle troughs. Asset backing (P/B) more relevant than earnings multiples.
+
+### 5. TECHNOLOGY & SOFTWARE
+
+**Identification**: SIC codes 73xx (software), 35xx (computer equipment), business description includes "software", "SaaS", "technology platform"
+
+**Adjustments**:
+- **Negative FCF Acceptable IF**:
+  → Revenue Growth >30% AND
+  → Gross Margin >60% AND
+  → Gross Margin improving YoY
+  → Award 0.5 pts for FCF (vs 0 pts standard) if above conditions met
+- **R&D Intensity**: R&D/Revenue >15% is neutral (not penalized)
+- **Profitability Path**: Accept current losses if clear path to profitability documented
+  → Operating Margin improving by >5 pts YoY = 0.5 pts (partial credit)
+- **Valuation**: Use P/S <8 AND Revenue Growth >25% as alternative to P/E
+  → If both met = 1 pt (alternative valuation metric)
+
+**Rationale**: High-growth tech companies often sacrifice near-term profits for market share. Focus on unit economics (gross margin) and growth trajectory over current profitability.
+
+### SECTOR DETECTION & DOCUMENTATION
+
+**Step 1**: Identify sector from business description, SIC code, or industry classification
+**Step 2**: Apply relevant sector-specific thresholds during scoring
+**Step 3**: Document in SECTOR_ADJUSTMENTS field which adjustments were applied
+**Step 4**: Include adjusted denominators in score calculations
+
+**Example Documentation**:
+```
+SECTOR: Banking
+SECTOR_ADJUSTMENTS: D/E ratio excluded (not applicable for banks) - Leverage score denominator adjusted to 1 pt. ROE threshold lowered to 12% (vs 15% standard). ROA threshold lowered to 1.0% (vs 7% standard).
+```
+
+If company does not clearly fit any sector above, use standard thresholds and note:
+```
+SECTOR: General/Diversified
+SECTOR_ADJUSTMENTS: None - standard thresholds applied
+```
+
+---
+
 ## MANDATORY CROSS-CHECKS (Execute AFTER Collecting All Metrics)
 
 These checks override individual scores. They catch metric combinations that individual thresholds miss.
@@ -1011,6 +1112,8 @@ Step 5: Now populate DATA_BLOCK:
 Analyzing [TICKER] - [COMPANY NAME]
 
 ### --- START DATA_BLOCK ---
+SECTOR: [Banking / Utilities / REITs / Shipping/Commodities / Technology/Software / General/Diversified]
+SECTOR_ADJUSTMENTS: [Description of adjustments applied, or "None - standard thresholds applied"]
 RAW_HEALTH_SCORE: [X]/12
 ADJUSTED_HEALTH_SCORE: [X]% (based on [Y] available points)
 RAW_GROWTH_SCORE: [X]/6
@@ -1110,7 +1213,7 @@ PFIC_RISK: [LOW / MEDIUM / HIGH]
 **IBKR Accessibility**: [Status and notes]
 
 **PFIC Risk**: [Assessment]""",
-            metadata={"last_updated": "2025-12-06", "thesis_version": "6.0", "critical_output": "financial_score", "changes": "Version 6.2: Added MANDATORY CROSS-CHECKS section with 5 cross-metric validation rules and CROSS-CHECK FLAGS to output template."}
+            metadata={"last_updated": "2025-12-07", "thesis_version": "6.0", "critical_output": "financial_score", "changes": "Version 6.3: Added comprehensive SECTOR-SPECIFIC ADJUSTMENTS section covering 5 key sectors (Banks, Utilities, REITs, Shipping/Commodities, Tech/Software) with industry-appropriate thresholds. Added SECTOR and SECTOR_ADJUSTMENTS fields to DATA_BLOCK."}
         )
         
         # ==========================================

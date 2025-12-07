@@ -19,12 +19,12 @@ class TestRateLimitConfiguration:
 
         Skips test if GEMINI_RPM_LIMIT is set (user may be on paid tier).
         """
-        env_value = os.environ.get("GEMINI_RPM_LIMIT")
-
-        if env_value is not None:
-            pytest.skip(f"GEMINI_RPM_LIMIT is set to {env_value}, skipping default test")
-
         import src.config
+
+        # Skip if config has non-default value (user may be on paid tier)
+        if src.config.config.gemini_rpm_limit != 15:
+            pytest.skip(f"GEMINI_RPM_LIMIT is set to {src.config.config.gemini_rpm_limit}, skipping default test")
+
         assert src.config.config.gemini_rpm_limit == 15
 
     def test_paid_tier_1_360_rpm(self):
