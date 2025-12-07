@@ -218,25 +218,118 @@ class TestTraderNode:
 
 class TestStateCleanerNode:
     """Test state cleaner node."""
-    
+
     @pytest.mark.asyncio
     async def test_create_state_cleaner_node(self):
         """Test state cleaner node creation."""
         from src.agents import create_state_cleaner_node
-        
+
         node = create_state_cleaner_node()
-        
+
         state = {
             "messages": ["old message"],
             "tools_called": {"test": {"tool1"}}
         }
         config = {"configurable": {"context": MagicMock(ticker="AAPL")}}
-        
+
         result = await node(state, config)
-        
+
         assert "messages" in result
         assert len(result["messages"]) == 1  # Should have new message
         assert "AAPL" in result["messages"][0].content
+
+
+class TestFundamentalsAnalystPrompt:
+    """Test fundamentals analyst prompt structure and cross-checks."""
+
+    def test_fundamentals_analyst_prompt_version(self):
+        """Test that fundamentals analyst prompt is version 6.2 with cross-checks."""
+        from src.prompts import get_prompt
+
+        prompt = get_prompt("fundamentals_analyst")
+
+        assert prompt is not None
+        assert prompt.version == "6.2"
+        assert prompt.agent_key == "fundamentals_analyst"
+
+    def test_fundamentals_analyst_cross_checks_in_prompt(self):
+        """Test that cross-check validation rules are in the prompt."""
+        from src.prompts import get_prompt
+
+        prompt = get_prompt("fundamentals_analyst")
+        system_message = prompt.system_message
+
+        # Verify MANDATORY CROSS-CHECKS section exists
+        assert "MANDATORY CROSS-CHECKS" in system_message
+
+        # Verify all 5 cross-checks are defined
+        assert "CASH FLOW QUALITY CHECK" in system_message
+        assert "LEVERAGE + COVERAGE CHECK" in system_message
+        assert "EARNINGS QUALITY CHECK" in system_message
+        assert "GROWTH + MARGIN CHECK" in system_message
+        assert "VALUATION DISCONNECT" in system_message
+
+        # Verify cross-checks have thresholds
+        assert "Operating Margin > 30%" in system_message
+        assert "D/E > 100%" in system_message
+        assert "Interest Coverage < 3.0" in system_message
+        assert "Revenue Growth > 20%" in system_message
+        assert "P/E > 20" in system_message
+
+        # Verify score adjustment instructions
+        assert "REDUCE" in system_message or "reduce" in system_message
+        assert "Apply score adjustments BEFORE populating DATA_BLOCK" in system_message
+
+    def test_fundamentals_analyst_output_template_has_cross_checks(self):
+        """Test that output template includes CROSS-CHECK FLAGS section."""
+        from src.prompts import get_prompt
+
+        prompt = get_prompt("fundamentals_analyst")
+        system_message = prompt.system_message
+
+        # Verify CROSS-CHECK FLAGS section in output template
+        assert "CROSS-CHECK FLAGS" in system_message
+
+        # Verify reporting instructions
+        assert "List any triggered cross-checks" in system_message or "triggered cross-checks" in system_message
+
+    @pytest.mark.asyncio
+    async def test_fundamentals_analyst_node_uses_correct_prompt(self):
+        """Test that fundamentals analyst node loads the correct prompt version."""
+        from src.agents import create_analyst_node
+        from src.prompts import get_prompt
+
+        # Mock LLM
+        mock_llm = MagicMock()
+        mock_response = SimpleNamespace(
+            content="Mock fundamentals report",
+            tool_calls=None
+        )
+        mock_llm.bind_tools.return_value.ainvoke = AsyncMock(return_value=mock_response)
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+        # Create fundamentals analyst node
+        node = create_analyst_node(
+            mock_llm,
+            "fundamentals_analyst",
+            [],  # tools
+            "fundamentals_report"
+        )
+
+        state = {
+            "messages": [],
+            "company_of_interest": "TEST.US",
+            "trade_date": "2025-12-06"
+        }
+        config = {"configurable": {"context": MagicMock(ticker="TEST.US", trade_date="2025-12-06")}}
+
+        result = await node(state, config)
+
+        # Verify node executed and used correct prompt
+        assert "prompts_used" in result
+        assert "fundamentals_report" in result["prompts_used"]
+        assert result["prompts_used"]["fundamentals_report"]["version"] == "6.2"
+        assert result["prompts_used"]["fundamentals_report"]["agent_name"] == "Fundamentals Analyst"
 
 
 if __name__ == "__main__":
