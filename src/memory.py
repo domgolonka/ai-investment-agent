@@ -3,12 +3,13 @@ Long-term Memory System for Multi-Agent Trading System
 Updated for LangChain 1.x and Google Gemini Embeddings (text-embedding-004).
 
 UPDATED: Added ticker-specific memory isolation to prevent cross-contamination.
+FIXED: ChromaDB v0.6.0 compatibility (list_collections returns strings).
+UPDATED: Cleanup is now scoped to specific tickers to avoid wiping entire DB.
+FIXED: get_stats() now gracefully handles deleted collections (zombie memories).
+CLEANUP: Removed legacy global memory instances.
 
 This module provides vector-based memory storage for financial debate history,
 allowing agents to learn from past analyses and decisions.
-
-CRITICAL FIX: Memories are now ticker-specific to prevent contamination.
-Example: HSBC (0005.HK) and Canon (7915.T) will have separate memory collections.
 """
 
 import asyncio
@@ -50,8 +51,8 @@ class FinancialSituationMemory:
         self.situation_collection = None
         self.embeddings = None
         
-        # Check for API key
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        # Check for API key via config
+        api_key = config.get_google_api_key()
         if not api_key:
             logger.warning(
                 "memory_disabled",
@@ -359,57 +360,112 @@ class FinancialSituationMemory:
         
         return memory_text
     
-    def clear_old_memories(self, days_to_keep: int = 90) -> int:
+    def clear_old_memories(self, days_to_keep: int = 90, ticker: Optional[str] = None) -> Dict[str, int]:
         """
         Remove memories older than specified days.
         
+        UPDATED: Now supports ticker-scoped cleanup.
+        
         Args:
-            days_to_keep: Number of days of history to retain
-            
+            days_to_keep: Delete memories older than this many days (0 = delete ALL)
+            ticker: If provided, ONLY clean collections starting with this ticker's ID.
+                    If None, clean ALL collections in the database.
+        
         Returns:
-            Number of memories deleted
+            Dict of collection_name -> documents_deleted
         """
-        if not self.available:
-            logger.debug("memory_cleanup_skipped", collection=self.name)
-            return 0
+        results = {}
         
         try:
-            from datetime import timedelta
+            import chromadb
+            from chromadb.config import Settings
             
-            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-            cutoff_iso = cutoff_date.isoformat()
-            
-            # Get all documents
-            all_docs = self.situation_collection.get()
-            
-            # Find old document IDs
-            ids_to_delete = []
-            if all_docs and 'metadatas' in all_docs:
-                for doc_id, metadata in zip(all_docs['ids'], all_docs['metadatas']):
-                    timestamp = metadata.get('timestamp', '')
-                    if timestamp and timestamp < cutoff_iso:
-                        ids_to_delete.append(doc_id)
-            
-            # Delete old documents
-            if ids_to_delete:
-                self.situation_collection.delete(ids=ids_to_delete)
-                logger.info(
-                    "old_memories_cleaned",
-                    collection=self.name,
-                    deleted_count=len(ids_to_delete),
-                    days_kept=days_to_keep
+            client = chromadb.PersistentClient(
+                path=str(config.chroma_persist_directory),
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
                 )
-                return len(ids_to_delete)
+            )
             
-            return 0
+            collections = client.list_collections()
             
+            # Calculate ticker prefix if provided
+            target_prefix = None
+            if ticker:
+                target_prefix = sanitize_ticker_for_collection(ticker)
+                logger.info(f"Scoping memory cleanup to ticker prefix: {target_prefix}")
+            
+            for collection_item in collections:
+                try:
+                    # --- FIX FOR CHROMA 0.6.0+ COMPATIBILITY ---
+                    if isinstance(collection_item, str):
+                        collection = client.get_collection(collection_item)
+                        collection_name = collection_item
+                    else:
+                        collection = collection_item
+                        collection_name = collection.name
+                    # -------------------------------------------
+                    
+                    # Filter by ticker if requested
+                    if target_prefix and not collection_name.startswith(target_prefix):
+                        continue
+
+                    if days_to_keep == 0:
+                        # Delete entire collection
+                        count = collection.count()
+                        client.delete_collection(collection_name)
+                        results[collection_name] = count
+                        logger.info(
+                            "collection_deleted",
+                            name=collection_name,
+                            documents_deleted=count
+                        )
+                    else:
+                        # Delete old documents
+                        from datetime import timedelta
+                        
+                        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+                        cutoff_iso = cutoff_date.isoformat()
+                        
+                        all_docs = collection.get()
+                        ids_to_delete = []
+                        
+                        if all_docs and 'metadatas' in all_docs:
+                            for doc_id, metadata in zip(all_docs['ids'], all_docs['metadatas']):
+                                timestamp = metadata.get('timestamp', '')
+                                if timestamp and timestamp < cutoff_iso:
+                                    ids_to_delete.append(doc_id)
+                        
+                        if ids_to_delete:
+                            collection.delete(ids=ids_to_delete)
+                            results[collection_name] = len(ids_to_delete)
+                            logger.info(
+                                "old_documents_deleted",
+                                collection=collection_name,
+                                count=len(ids_to_delete),
+                                days_kept=days_to_keep
+                            )
+                        else:
+                            results[collection_name] = 0
+                            
+                except Exception as e:
+                    # Try to get name for logging
+                    name = getattr(collection_item, 'name', str(collection_item))
+                    logger.error(
+                        "collection_cleanup_failed",
+                        collection=name,
+                        error=str(e)
+                    )
+                    results[name] = 0
+                    
         except Exception as e:
             logger.error(
-                "clear_old_memories_failed",
-                collection=self.name,
+                "cleanup_all_memories_failed",
                 error=str(e)
             )
-            return 0
+        
+        return results
     
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -433,6 +489,19 @@ class FinancialSituationMemory:
                 "count": count
             }
         except Exception as e:
+            # FIX: Gracefully handle deleted collections (zombies)
+            if "does not exist" in str(e) or "Collection not found" in str(e):
+                logger.debug(
+                    "collection_deleted_externally",
+                    collection=self.name
+                )
+                return {
+                    "available": False,
+                    "name": self.name,
+                    "count": 0,
+                    "status": "deleted"
+                }
+            
             logger.error(
                 "get_stats_failed",
                 collection=self.name,
@@ -534,15 +603,16 @@ def create_memory_instances(ticker: str) -> Dict[str, FinancialSituationMemory]:
     return instances
 
 
-def cleanup_all_memories(days: int = 0) -> Dict[str, int]:
+def cleanup_all_memories(days: int = 0, ticker: Optional[str] = None) -> Dict[str, int]:
     """
-    Clean up memories from all collections.
+    Clean up memories from collections.
     
-    CRITICAL: Use this to prevent cross-ticker contamination.
-    Call with days=0 before analyzing a new ticker to start fresh.
+    UPDATED: Now supports ticker-scoped cleanup.
     
     Args:
         days: Delete memories older than this many days (0 = delete ALL)
+        ticker: If provided, ONLY clean collections starting with this ticker's ID.
+                If None, clean ALL collections in the database.
     
     Returns:
         Dict of collection_name -> documents_deleted
@@ -563,21 +633,41 @@ def cleanup_all_memories(days: int = 0) -> Dict[str, int]:
         
         collections = client.list_collections()
         
-        for collection in collections:
+        # Calculate ticker prefix if provided
+        target_prefix = None
+        if ticker:
+            target_prefix = sanitize_ticker_for_collection(ticker)
+            logger.info(f"Scoping memory cleanup to ticker prefix: {target_prefix}")
+        
+        for collection_item in collections:
             try:
+                # --- FIX FOR CHROMA 0.6.0+ COMPATIBILITY ---
+                if isinstance(collection_item, str):
+                    collection = client.get_collection(collection_item)
+                    collection_name = collection_item
+                else:
+                    collection = collection_item
+                    collection_name = collection.name
+                # -------------------------------------------
+                
+                # Filter by ticker if requested
+                if target_prefix and not collection_name.startswith(target_prefix):
+                    continue
+
                 if days == 0:
                     # Delete entire collection
                     count = collection.count()
-                    client.delete_collection(collection.name)
-                    results[collection.name] = count
+                    client.delete_collection(collection_name)
+                    results[collection_name] = count
                     logger.info(
                         "collection_deleted",
-                        name=collection.name,
+                        name=collection_name,
                         documents_deleted=count
                     )
                 else:
                     # Delete old documents
                     from datetime import timedelta
+                    
                     cutoff_date = datetime.now() - timedelta(days=days)
                     cutoff_iso = cutoff_date.isoformat()
                     
@@ -592,23 +682,25 @@ def cleanup_all_memories(days: int = 0) -> Dict[str, int]:
                     
                     if ids_to_delete:
                         collection.delete(ids=ids_to_delete)
-                        results[collection.name] = len(ids_to_delete)
+                        results[collection_name] = len(ids_to_delete)
                         logger.info(
                             "old_documents_deleted",
-                            collection=collection.name,
+                            collection=collection_name,
                             count=len(ids_to_delete),
                             days_kept=days
                         )
                     else:
-                        results[collection.name] = 0
+                        results[collection_name] = 0
                         
             except Exception as e:
+                # Try to get name for logging
+                name = getattr(collection_item, 'name', str(collection_item))
                 logger.error(
                     "collection_cleanup_failed",
-                    collection=collection.name,
+                    collection=name,
                     error=str(e)
                 )
-                results[collection.name] = 0
+                results[name] = 0
                 
     except Exception as e:
         logger.error(
@@ -642,8 +734,15 @@ def get_all_memory_stats() -> Dict[str, Dict[str, Any]]:
         
         collections = client.list_collections()
         
-        for collection in collections:
+        for collection_item in collections:
             try:
+                # --- FIX FOR CHROMA 0.6.0+ COMPATIBILITY ---
+                if isinstance(collection_item, str):
+                    collection = client.get_collection(collection_item)
+                else:
+                    collection = collection_item
+                # -------------------------------------------
+
                 count = collection.count()
                 metadata = collection.metadata
                 stats[collection.name] = {
@@ -651,12 +750,16 @@ def get_all_memory_stats() -> Dict[str, Dict[str, Any]]:
                     "metadata": metadata
                 }
             except Exception as e:
+                name = getattr(collection_item, 'name', str(collection_item))
+                # Gracefully handle zombies in all-stats too
+                if "does not exist" in str(e):
+                    continue
                 logger.error(
                     "get_collection_stats_failed",
-                    collection=collection.name,
+                    collection=name,
                     error=str(e)
                 )
-                stats[collection.name] = {
+                stats[name] = {
                     "count": 0,
                     "error": str(e)
                 }
@@ -668,19 +771,3 @@ def get_all_memory_stats() -> Dict[str, Dict[str, Any]]:
         )
     
     return stats
-
-
-# DEPRECATED: Legacy global memory instances (kept for backwards compatibility)
-# WARNING: These are NOT ticker-specific and will cause cross-contamination!
-# Use create_memory_instances(ticker) instead for new code.
-bull_memory = FinancialSituationMemory("legacy_bull_memory")
-bear_memory = FinancialSituationMemory("legacy_bear_memory")
-trader_memory = FinancialSituationMemory("legacy_trader_memory")
-invest_judge_memory = FinancialSituationMemory("legacy_invest_judge_memory")
-risk_manager_memory = FinancialSituationMemory("legacy_risk_manager_memory")
-
-logger.warning(
-    "legacy_memory_instances_created",
-    message="Using legacy global memories. These will cause cross-ticker contamination. "
-            "Use create_memory_instances(ticker) instead."
-)

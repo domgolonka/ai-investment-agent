@@ -16,10 +16,25 @@ Run with:
 
 import pytest
 import os
+from unittest.mock import patch
+
+# Import the saved real key from conftest (needs to be available in session)
+try:
+    from tests.conftest import _REAL_GOOGLE_API_KEY
+except ImportError:
+    _REAL_GOOGLE_API_KEY = None
 
 # Mark all tests in this file as integration tests
 pytestmark = pytest.mark.integration
 
+@pytest.fixture
+def restore_real_env():
+    """Restores real API key for integration tests."""
+    if not _REAL_GOOGLE_API_KEY:
+        pytest.skip("Skipping integration test: No GOOGLE_API_KEY in original environment")
+    
+    with patch.dict(os.environ, {"GOOGLE_API_KEY": _REAL_GOOGLE_API_KEY}):
+        yield
 
 class TestRealTickerIsolation:
     """
@@ -29,17 +44,13 @@ class TestRealTickerIsolation:
     """
     
     @pytest.mark.asyncio
-    async def test_different_tickers_use_different_collections(self):
+    async def test_different_tickers_use_different_collections(self, restore_real_env):
         """
         THE MOST IMPORTANT TEST
         
         Verifies that analyzing different tickers creates separate ChromaDB collections
         and that data from one ticker does NOT appear in queries for another ticker.
         """
-        # Skip if no real API key available
-        if not os.environ.get("GOOGLE_API_KEY"):
-            pytest.skip("Requires GOOGLE_API_KEY environment variable")
-        
         from src.memory import create_memory_instances, cleanup_all_memories
         
         try:
@@ -123,18 +134,16 @@ class TestRealTickerIsolation:
             
         finally:
             # Cleanup - remove all test collections (SYNC!)
-            cleanup_all_memories(days=0)
+            cleanup_all_memories(days=0, ticker="AAPL")
+            cleanup_all_memories(days=0, ticker="MSFT")
     
     @pytest.mark.asyncio
-    async def test_memory_persistence_across_instances(self):
+    async def test_memory_persistence_across_instances(self, restore_real_env):
         """
         Verify that memory persists when you create new instances.
         
         Simulates: Run analysis for AAPL, create new instances, memories still there.
         """
-        if not os.environ.get("GOOGLE_API_KEY"):
-            pytest.skip("Requires GOOGLE_API_KEY environment variable")
-        
         from src.memory import create_memory_instances, cleanup_all_memories
         
         try:
@@ -183,16 +192,13 @@ class TestRealTickerIsolation:
         
         finally:
             # SYNC cleanup
-            cleanup_all_memories(days=0)
+            cleanup_all_memories(days=0, ticker="AAPL")
     
     @pytest.mark.asyncio
-    async def test_cleanup_removes_all_ticker_collections(self):
+    async def test_cleanup_removes_all_ticker_collections(self, restore_real_env):
         """
         Verify that cleanup actually removes collections.
         """
-        if not os.environ.get("GOOGLE_API_KEY"):
-            pytest.skip("Requires GOOGLE_API_KEY environment variable")
-        
         from src.memory import create_memory_instances, cleanup_all_memories, get_all_memory_stats
         
         try:
@@ -210,34 +216,38 @@ class TestRealTickerIsolation:
             
             # Get stats before cleanup
             stats_before = get_all_memory_stats()
-            assert len(stats_before) >= 10, "Should have at least 10 collections (5 per ticker)"
+            # We check if our new collections exist in the stats
+            assert "AAPL_bull_memory" in stats_before
+            assert "MSFT_bull_memory" in stats_before
             
-            # Cleanup all (SYNC!)
-            cleanup_stats = cleanup_all_memories(days=0)
+            # Cleanup AAPL only (SYNC!)
+            cleanup_stats = cleanup_all_memories(days=0, ticker="AAPL")
             
-            # Verify cleanup happened
-            assert len(cleanup_stats) >= 10, "Should have cleaned up all collections"
+            # Verify cleanup happened for AAPL
+            assert "AAPL_bull_memory" in cleanup_stats
             
             # Get stats after cleanup
             stats_after = get_all_memory_stats()
-            assert len(stats_after) == 0, "All collections should be removed after cleanup"
+            assert "AAPL_bull_memory" not in stats_after, "AAPL collection should be removed"
+            assert "MSFT_bull_memory" in stats_after, "MSFT collection should still exist"
+            
+            # Cleanup MSFT
+            cleanup_all_memories(days=0, ticker="MSFT")
         
         finally:
             # Extra cleanup to be sure (SYNC!)
-            cleanup_all_memories(days=0)
+            cleanup_all_memories(days=0, ticker="AAPL")
+            cleanup_all_memories(days=0, ticker="MSFT")
 
 
 class TestRealMemoryOperations:
     """Test actual memory operations with real ChromaDB."""
     
     @pytest.mark.asyncio
-    async def test_add_and_query_with_real_embeddings(self):
+    async def test_add_and_query_with_real_embeddings(self, restore_real_env):
         """
         Basic sanity test: Can we add situations and query them back?
         """
-        if not os.environ.get("GOOGLE_API_KEY"):
-            pytest.skip("Requires GOOGLE_API_KEY environment variable")
-        
         from src.memory import create_memory_instances, cleanup_all_memories
         
         try:
@@ -272,16 +282,13 @@ class TestRealMemoryOperations:
         
         finally:
             # SYNC cleanup
-            cleanup_all_memories(days=0)
+            cleanup_all_memories(days=0, ticker="TEST")
     
     @pytest.mark.asyncio
-    async def test_cleanup_respects_time_filter(self):
+    async def test_cleanup_respects_time_filter(self, restore_real_env):
         """
         Test that cleanup with days_to_keep parameter works.
         """
-        if not os.environ.get("GOOGLE_API_KEY"):
-            pytest.skip("Requires GOOGLE_API_KEY environment variable")
-
         from src.memory import create_memory_instances, cleanup_all_memories
         
         try:
@@ -297,16 +304,17 @@ class TestRealMemoryOperations:
             
             # Get initial count
             stats = memory.get_stats()
-            initial_count = stats.get("document_count", 0)
+            initial_count = stats.get("count", 0)
             assert initial_count == 2
             
             # Cleanup with days_to_keep=30 should NOT delete recent memories (SYNC!)
+            # Note: clear_old_memories is instance method
             deleted = memory.clear_old_memories(days_to_keep=30)
             assert deleted == 0, "Recent memories should not be deleted"
             
             # Verify still there
             stats_after = memory.get_stats()
-            assert stats_after.get("document_count", 0) == 2
+            assert stats_after.get("count", 0) == 2
             
             # Cleanup with days_to_keep=0 should delete everything (SYNC!)
             deleted = memory.clear_old_memories(days_to_keep=0)
@@ -314,16 +322,8 @@ class TestRealMemoryOperations:
             
             # Verify deleted
             stats_final = memory.get_stats()
-            assert stats_final.get("document_count", 0) == 0
+            assert stats_final.get("count", 0) == 0
         
         finally:
             # SYNC cleanup
-            cleanup_all_memories(days=0)
-
-
-# Configuration for pytest markers
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line(
-        "markers", "integration: mark test as integration test (slow, requires real ChromaDB)"
-    )
+            cleanup_all_memories(days=0, ticker="TEST")

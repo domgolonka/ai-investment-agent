@@ -50,8 +50,9 @@ class TestGraphMemoryIntegration:
             max_debate_rounds=1
         )
         
-        # Verify cleanup was called first
-        mock_cleanup.assert_called_once_with(days=0)
+        # Verify cleanup was called first with ticker
+        # UPDATED: Expect ticker argument
+        mock_cleanup.assert_called_once_with(days=0, ticker="TEST")
         
         # Verify memories were created after cleanup
         mock_create_memories.assert_called_once_with("TEST")
@@ -169,8 +170,10 @@ class TestGraphMemoryContaminationPrevention:
                 f"{safe_ticker}_risk_manager_memory": MagicMock(available=True),
             }
         
-        def track_cleanup(days):
-            analysis_sequence.append(('cleanup', days))
+        # FIX: Accept kwargs to handle 'ticker' argument safely
+        def track_cleanup(days, **kwargs):
+            ticker = kwargs.get('ticker')
+            analysis_sequence.append(('cleanup', days, ticker))
             return {}
         
         mock_create_memories.side_effect = track_create_memories
@@ -201,11 +204,11 @@ class TestGraphMemoryContaminationPrevention:
         assert len(analysis_sequence) == 6  # 3 cleanups + 3 creates
         
         # Verify cleanups happened before each ticker
-        assert analysis_sequence[0] == ('cleanup', 0)  # Before HSBC
+        assert analysis_sequence[0] == ('cleanup', 0, '0005.HK')  # Before HSBC
         assert analysis_sequence[1] == ('create', '0005.HK')
-        assert analysis_sequence[2] == ('cleanup', 0)  # Before Canon
+        assert analysis_sequence[2] == ('cleanup', 0, '7915.T')  # Before Canon
         assert analysis_sequence[3] == ('create', '7915.T')
-        assert analysis_sequence[4] == ('cleanup', 0)  # Before HSBC again
+        assert analysis_sequence[4] == ('cleanup', 0, '0005.HK')  # Before HSBC again
         assert analysis_sequence[5] == ('create', '0005.HK')
         
         # All graphs should be created

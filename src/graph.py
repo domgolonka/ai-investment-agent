@@ -26,13 +26,7 @@ from src.llms import create_quick_thinking_llm, create_deep_thinking_llm
 from src.toolkit import toolkit
 from src.token_tracker import TokenTrackingCallback, get_tracker
 from src.memory import (
-    create_memory_instances, cleanup_all_memories,
-    # Legacy imports for backwards compatibility (DEPRECATED)
-    bull_memory as legacy_bull_memory, 
-    bear_memory as legacy_bear_memory,
-    invest_judge_memory as legacy_invest_judge_memory,
-    trader_memory as legacy_trader_memory,
-    risk_manager_memory as legacy_risk_manager_memory
+    create_memory_instances, cleanup_all_memories, FinancialSituationMemory
 )
 
 logger = structlog.get_logger(__name__)
@@ -188,9 +182,10 @@ def create_trading_graph(
             logger.info(
                 "cleaning_previous_memories",
                 ticker=ticker,
-                message="Deleting all previous memory collections to prevent contamination"
+                message="Deleting previous memory collections for THIS ticker to prevent contamination"
             )
-            cleanup_all_memories(days=0)
+            # UPDATED: Pass ticker to scoped cleanup
+            cleanup_all_memories(days=0, ticker=ticker)
         
         logger.info(
             "creating_ticker_memories",
@@ -201,11 +196,11 @@ def create_trading_graph(
         
         # Extract specific memories for each agent
         safe_ticker = ticker.replace(".", "_").replace("-", "_")
-        bull_memory = memories.get(f"{safe_ticker}_bull_memory", legacy_bull_memory)
-        bear_memory = memories.get(f"{safe_ticker}_bear_memory", legacy_bear_memory)
-        invest_judge_memory = memories.get(f"{safe_ticker}_invest_judge_memory", legacy_invest_judge_memory)
-        trader_memory = memories.get(f"{safe_ticker}_trader_memory", legacy_trader_memory)
-        risk_manager_memory = memories.get(f"{safe_ticker}_risk_manager_memory", legacy_risk_manager_memory)
+        bull_memory = memories.get(f"{safe_ticker}_bull_memory")
+        bear_memory = memories.get(f"{safe_ticker}_bear_memory")
+        invest_judge_memory = memories.get(f"{safe_ticker}_invest_judge_memory")
+        trader_memory = memories.get(f"{safe_ticker}_trader_memory")
+        risk_manager_memory = memories.get(f"{safe_ticker}_risk_manager_memory")
         
         logger.info(
             "ticker_memories_ready",
@@ -225,11 +220,12 @@ def create_trading_graph(
             message="Using legacy global memories. This WILL cause cross-ticker contamination! "
                     "Use ticker-specific memories by passing ticker parameter."
         )
-        bull_memory = legacy_bull_memory
-        bear_memory = legacy_bear_memory
-        invest_judge_memory = legacy_invest_judge_memory
-        trader_memory = legacy_trader_memory
-        risk_manager_memory = legacy_risk_manager_memory
+        # Manually create legacy instances since they are no longer global
+        bull_memory = FinancialSituationMemory("legacy_bull_memory")
+        bear_memory = FinancialSituationMemory("legacy_bear_memory")
+        invest_judge_memory = FinancialSituationMemory("legacy_invest_judge_memory")
+        trader_memory = FinancialSituationMemory("legacy_trader_memory")
+        risk_manager_memory = FinancialSituationMemory("legacy_risk_manager_memory")
     
     # Log graph creation
     logger.info(

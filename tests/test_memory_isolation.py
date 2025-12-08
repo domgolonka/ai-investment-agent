@@ -264,13 +264,12 @@ class TestMemoryContaminationPrevention:
         from src.graph import create_trading_graph
         
         with patch('src.graph.create_memory_instances') as mock_create_memories:
-            mock_memories = {
-                "TEST_bull_memory": MagicMock(available=True),
-                "TEST_bear_memory": MagicMock(available=True),
-                "TEST_trader_memory": MagicMock(available=True),
-                "TEST_invest_judge_memory": MagicMock(available=True),
-                "TEST_risk_manager_memory": MagicMock(available=True),
-            }
+            # Setup mock memories
+            mock_memories = {}
+            for name in ["TEST_bull_memory", "TEST_bear_memory", "TEST_trader_memory", 
+                        "TEST_invest_judge_memory", "TEST_risk_manager_memory"]:
+                mock_memories[name] = MagicMock(available=True)
+                
             mock_create_memories.return_value = mock_memories
             
             # Create graph with ticker
@@ -285,13 +284,13 @@ class TestMemoryContaminationPrevention:
         
         with patch('src.graph.cleanup_all_memories') as mock_cleanup:
             with patch('src.graph.create_memory_instances') as mock_create:
-                mock_create.return_value = {
-                    "TEST_bull_memory": MagicMock(available=True),
-                    "TEST_bear_memory": MagicMock(available=True),
-                    "TEST_trader_memory": MagicMock(available=True),
-                    "TEST_invest_judge_memory": MagicMock(available=True),
-                    "TEST_risk_manager_memory": MagicMock(available=True),
-                }
+                # Setup mock memories
+                mock_memories = {}
+                for name in ["TEST_bull_memory", "TEST_bear_memory", "TEST_trader_memory", 
+                            "TEST_invest_judge_memory", "TEST_risk_manager_memory"]:
+                    mock_memories[name] = MagicMock(available=True)
+                    
+                mock_create.return_value = mock_memories
                 
                 # Create graph with cleanup
                 graph = create_trading_graph(
@@ -300,7 +299,7 @@ class TestMemoryContaminationPrevention:
                 )
                 
                 # Verify cleanup was called with days=0 (delete all)
-                mock_cleanup.assert_called_once_with(days=0)
+                mock_cleanup.assert_called_once_with(days=0, ticker="TEST")
 
 
 class TestMemoryStats:
@@ -367,27 +366,6 @@ class TestMemoryStats:
 
 class TestBackwardsCompatibility:
     """Test that legacy code still works (with warnings)."""
-    
-    def test_legacy_global_memories_exist(self):
-        """Test that legacy global memory instances still exist."""
-        from src.memory import (
-            bull_memory,
-            bear_memory,
-            trader_memory,
-            invest_judge_memory,
-            risk_manager_memory
-        )
-        
-        # Should all exist (even if not available)
-        assert bull_memory is not None
-        assert bear_memory is not None
-        assert trader_memory is not None
-        assert invest_judge_memory is not None
-        assert risk_manager_memory is not None
-        
-        # Should have legacy names
-        assert bull_memory.name == "legacy_bull_memory"
-        assert bear_memory.name == "legacy_bear_memory"
     
     def test_graph_without_ticker_uses_legacy(self):
         """Test that graph without ticker parameter uses legacy memories."""

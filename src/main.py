@@ -160,15 +160,19 @@ def display_welcome_banner(ticker: str, quick_mode: bool):
     console.print(Panel(config_table, title=title, border_style="blue"))
 
 
-def display_memory_statistics():
-    """Display memory statistics for all agents."""
+def display_memory_statistics(ticker: str):
+    """Display memory statistics for the current ticker."""
     if not config.enable_memory:
         return
     
     try:
-        from src.memory import bull_memory, bear_memory, invest_judge_memory, trader_memory, risk_manager_memory
+        from src.memory import create_memory_instances, sanitize_ticker_for_collection
         
-        console.print("\n[bold cyan]Memory System Statistics:[/bold cyan]\n")
+        # Get memories specific to THIS ticker
+        memories = create_memory_instances(ticker)
+        safe_ticker = sanitize_ticker_for_collection(ticker)
+        
+        console.print(f"\n[bold cyan]Memory Statistics for {ticker}:[/bold cyan]\n")
         
         memory_table = Table(show_header=True, box=box.ROUNDED)
         memory_table.add_column("Agent", style="cyan")
@@ -176,21 +180,22 @@ def display_memory_statistics():
         memory_table.add_column("Total Memories", style="green")
         memory_table.add_column("Status", style="blue")
         
-        memories = [
-            ("Bull Researcher", bull_memory),
-            ("Bear Researcher", bear_memory),
-            ("Research Manager", invest_judge_memory),
-            ("Trader", trader_memory),
-            ("Portfolio Manager", risk_manager_memory)
+        agent_mapping = [
+            ("Bull Researcher", f"{safe_ticker}_bull_memory"),
+            ("Bear Researcher", f"{safe_ticker}_bear_memory"),
+            ("Research Manager", f"{safe_ticker}_invest_judge_memory"),
+            ("Trader", f"{safe_ticker}_trader_memory"),
+            ("Portfolio Manager", f"{safe_ticker}_risk_manager_memory")
         ]
         
-        for name, mem in memories:
-            stats = mem.get_stats()
-            available = "✓" if stats.get("available") else "✗"
-            total = str(stats.get("document_count", 0))
-            status = "Active" if stats.get("available") else "Inactive"
-            
-            memory_table.add_row(name, available, total, status)
+        for display_name, mem_key in agent_mapping:
+            mem = memories.get(mem_key)
+            if mem:
+                stats = mem.get_stats()
+                available = "✓" if stats.get("available") else "✗"
+                total = str(stats.get("count", 0))
+                status = "Active" if stats.get("available") else "Inactive"
+                memory_table.add_row(display_name, available, total, status)
         
         console.print(memory_table)
         console.print()
@@ -255,7 +260,7 @@ def display_token_summary():
     console.print()
 
 
-def display_results(result: dict):
+def display_results(result: dict, ticker: str):
     """Display analysis results in a formatted manner."""
     console.print("\n" + "="*80)
     console.print("[bold green]Analysis Complete![/bold green]\n")
@@ -306,13 +311,14 @@ def display_results(result: dict):
             console.print(report_panel)
             console.print()
     
-    display_memory_statistics()
+    display_memory_statistics(ticker)
     console.print("="*80 + "\n")
 
 
 def save_results_to_file(result: dict, ticker: str) -> Path:
     """Save analysis results to a JSON file in the results directory."""
     from src.prompts import get_all_prompts
+    from src.memory import create_memory_instances, sanitize_ticker_for_collection
     
     results_dir = Path(config.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -342,13 +348,16 @@ def save_results_to_file(result: dict, ticker: str) -> Path:
     memory_stats = {}
     if config.enable_memory:
         try:
-            from src.memory import bull_memory, bear_memory, invest_judge_memory, trader_memory, risk_manager_memory
+            # Get actual memories for THIS ticker
+            memories = create_memory_instances(ticker)
+            safe_ticker = sanitize_ticker_for_collection(ticker)
+            
             memory_stats = {
-                "bull_researcher": bull_memory.get_stats(),
-                "bear_researcher": bear_memory.get_stats(),
-                "research_manager": invest_judge_memory.get_stats(),
-                "trader": trader_memory.get_stats(),
-                "portfolio_manager": risk_manager_memory.get_stats()
+                "bull_researcher": memories.get(f"{safe_ticker}_bull_memory").get_stats(),
+                "bear_researcher": memories.get(f"{safe_ticker}_bear_memory").get_stats(),
+                "research_manager": memories.get(f"{safe_ticker}_invest_judge_memory").get_stats(),
+                "trader": memories.get(f"{safe_ticker}_trader_memory").get_stats(),
+                "portfolio_manager": memories.get(f"{safe_ticker}_risk_manager_memory").get_stats()
             }
         except Exception as e:
             logger.warning(f"Could not get memory stats: {e}")
@@ -509,7 +518,9 @@ async def run_analysis(ticker: str, quick_mode: bool) -> Optional[dict]:
             ),
             final_trade_decision="",
             tools_called={},
-            prompts_used={}
+            prompts_used={},
+            red_flags=[],
+            pre_screening_result=""
         )
         
         context = TradingContext(
@@ -612,7 +623,7 @@ async def main():
                 report = reporter.generate_report(result, brief_mode=args.brief)
                 print(report)
             else:
-                display_results(result)
+                display_results(result, args.ticker)
             
             try:
                 filepath = save_results_to_file(result, args.ticker)
@@ -636,7 +647,7 @@ async def main():
             pass
         else:
             console.print("\n[yellow]Analysis interrupted by user.[/yellow]\n")
-        sys.exit(130)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         if args and (args.quiet or args.brief):

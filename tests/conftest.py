@@ -11,16 +11,23 @@ from unittest.mock import patch
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Capture real API key if present (for integration tests)
+_REAL_GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_env():
-    """Set up test environment variables."""
+    """
+    Set up test environment variables.
+    This fixture runs for the entire session and applies default MOCK values.
+    Individual tests that need real keys (integration tests) must override this.
+    """
     test_env = {
         'ENVIRONMENT': 'test',
         'LOG_LEVEL': 'ERROR',
         'ENABLE_MEMORY': 'false',
         'LANGSMITH_TRACING': 'false',
         'LANGCHAIN_TRACING_V2': 'false',
-        'GOOGLE_API_KEY': 'test-key',
+        'GOOGLE_API_KEY': 'test-key',  # Default to dummy key
         'TAVILY_API_KEY': 'test-key',
         'FINNHUB_API_KEY': 'test-key',
     }

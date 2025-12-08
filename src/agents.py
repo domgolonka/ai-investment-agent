@@ -5,6 +5,7 @@ ADDED: Debug logging to track data flow.
 FIXED: Memory retrieval now contextualized per ticker to prevent cross-contamination.
 UPDATED (Pass 3 Fixes): Added Negative Constraint to prompts and strict metadata filtering.
 UPDATED: Added explicit 429/ResourceExhausted handling for Gemini free tier.
+FIXED: Corrected memory query parameter name to 'metadata_filter'.
 """
 
 import asyncio
@@ -257,16 +258,16 @@ def create_researcher_node(llm, memory: Optional[Any], agent_key: str) -> Callab
         if memory:
             try:
                 # FIX: Strictly enforce metadata filtering
+                # CORRECTED PARAMETER NAME: metadata_filter (was filter_metadata in some versions)
                 relevant = await memory.query_similar_situations(
                     f"risks and upside for {ticker}",
                     n_results=3,
-                    filter_metadata={"ticker": ticker}
+                    metadata_filter={"ticker": ticker}
                 )
                 if relevant:
                     past_insights = f"\n\nPAST MEMORY INSIGHTS (STRICTLY FOR {ticker}):\n" + "\n".join([r['document'] for r in relevant])
                 else:
                     # If no strict match, do NOT fallback to semantic search to avoid contamination
-                    # (e.g. don't return Canon data for HSBC just because they are both 'value stocks')
                     logger.info("memory_no_exact_match", ticker=ticker)
                     past_insights = ""
 
@@ -460,6 +461,14 @@ def create_financial_health_validator_node() -> Callable:
         from src.validators.red_flag_detector import RedFlagDetector
 
         fundamentals_report = state.get('fundamentals_report', '')
+        
+        # --- FIX: DEFENSIVE HANDLING FOR LIST STATE ACCUMULATION ---
+        # LangGraph can sometimes pass the accumulated list of state updates
+        # instead of the reduced string. If we get a list, we take the last element
+        # which represents the most recent/final report.
+        if isinstance(fundamentals_report, list):
+            fundamentals_report = fundamentals_report[-1] if fundamentals_report else ""
+
         ticker = state.get('company_of_interest', 'UNKNOWN')
         company_name = state.get('company_name', ticker)
 

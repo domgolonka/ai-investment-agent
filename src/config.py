@@ -218,4 +218,12 @@ class Config:
         for name in logging.root.manager.loggerDict:
             logging.getLogger(name).setLevel(log_level)
 
+    def get_google_api_key(self) -> str:
+        """
+        Get Google API key from environment dynamically.
+        Using a method instead of a field ensures we always get the current
+        value from os.environ, which supports test patching.
+        """
+        return os.environ.get("GOOGLE_API_KEY", "")
+
 config = Config()

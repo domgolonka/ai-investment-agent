@@ -459,7 +459,7 @@ def get_financial_metrics(ticker):
 1. **yfinance** - Primary (free, comprehensive)
 2. **YahooQuery** - Backup for specific metrics
 3. **FMP** (Financial Modeling Prep) - Premium data if API key provided
-4. **EODHD** - Alternative fundamental data (I paid for a key here)
+4. **EODHD** - Alternative fundamental data (paid for a key, but still not great for international equities)
 5. **Tavily** - Web search fallback for critical gaps (this code needs improvement)
 
 ### Memory System (Ticker Isolation)

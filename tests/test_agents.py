@@ -152,7 +152,9 @@ class TestResearcherNode:
         call_args = mock_memory.query_similar_situations.call_args
         assert call_args is not None
         _, kwargs = call_args
-        assert kwargs.get("filter_metadata") == {"ticker": "0005.HK"}
+        
+        # UPDATED: Use 'metadata_filter' to match src/memory.py definition
+        assert kwargs.get("metadata_filter") == {"ticker": "0005.HK"}
 
     @pytest.mark.asyncio
     async def test_researcher_negative_constraint_prompt(self):
