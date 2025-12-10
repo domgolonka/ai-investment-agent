@@ -31,15 +31,17 @@ RUN curl -sSL https://install.python-poetry.org | python3 - \
 
 WORKDIR /build
 
-# Copy dependency manifests
-COPY pyproject.toml poetry.lock* ./
+# Copy dependency manifests and README (required by pyproject.toml)
+COPY pyproject.toml poetry.lock* README.md ./
 
 # Configure Poetry to not create virtual env (we're already in a container)
 ENV POETRY_VIRTUALENVS_CREATE=false
 
 # Install dependencies to system Python (builder stage)
 # Updated: --only main replaces deprecated --no-dev
-RUN poetry install --only main --no-interaction --no-ansi
+# Note: We use --no-root to skip installing the project itself in builder stage
+# The actual project code is copied in the runtime stage
+RUN poetry install --only main --no-root --no-interaction --no-ansi
 
 # ────────────────────────────────────────────────────────────────────────────
 # Stage 2: Runtime - Minimal production image
