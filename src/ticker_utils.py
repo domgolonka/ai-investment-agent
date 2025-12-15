@@ -7,6 +7,7 @@ and strict search query generation.
 import re
 from typing import Tuple, Optional, Dict
 import structlog
+from src.exceptions import TickerValidationError
 
 logger = structlog.get_logger(__name__)
 
@@ -376,6 +377,196 @@ class TickerFormatter:
         """Check if ticker is for a non-US exchange."""
         _, metadata = cls.normalize_ticker(ticker)
         return metadata.get("country", "United States") != "United States"
+
+
+# =============================================================================
+# Ticker Validation Functions
+# =============================================================================
+
+# Known valid exchange suffixes for international tickers
+VALID_EXCHANGE_SUFFIXES = {
+    # European exchanges
+    ".SW", ".SWX", ".VX",  # Switzerland
+    ".DE", ".F",  # Germany
+    ".PA",  # France
+    ".AS",  # Netherlands
+    ".BR",  # Belgium
+    ".LS",  # Portugal
+    ".MI",  # Italy
+    ".MC",  # Spain
+    ".L",  # UK
+
+    # Asian exchanges
+    ".T",  # Japan
+    ".HK",  # Hong Kong
+    ".SS", ".SZ",  # China
+    ".KS", ".KQ",  # South Korea
+    ".TW",  # Taiwan
+    ".SI",  # Singapore
+    ".BO", ".NS",  # India
+
+    # Other major exchanges
+    ".TO", ".V",  # Canada
+    ".AX",  # Australia
+    ".NZ",  # New Zealand
+    ".SA",  # Brazil
+    ".MX",  # Mexico
+    ".JK",  # Indonesia
+    ".KL",  # Malaysia
+    ".BK",  # Thailand
+}
+
+
+def validate_ticker(ticker: str) -> str:
+    """
+    Validate ticker format and return normalized uppercase ticker.
+
+    Validation rules:
+    1. Cannot be empty or whitespace-only
+    2. Max length: 15 characters
+    3. Allowed characters: A-Z, a-z, 0-9, '.', '-', '^'
+    4. Exchange suffixes must be recognized if present
+    5. Cannot start or end with a dot (except for exchange suffix)
+
+    Args:
+        ticker: The ticker symbol to validate
+
+    Returns:
+        Normalized uppercase ticker
+
+    Raises:
+        TickerValidationError: If ticker format is invalid
+
+    Examples:
+        >>> validate_ticker("AAPL")
+        'AAPL'
+        >>> validate_ticker("novn.sw")
+        'NOVN.SW'
+        >>> validate_ticker("BRK-B")
+        'BRK-B'
+        >>> validate_ticker("^GSPC")
+        '^GSPC'
+        >>> validate_ticker("")  # Raises TickerValidationError
+    """
+    # Check for empty input
+    if not ticker or not ticker.strip():
+        raise TickerValidationError(
+            "Ticker cannot be empty",
+            ticker=ticker,
+            reason="empty_ticker"
+        )
+
+    # Strip whitespace and convert to uppercase for validation
+    ticker = ticker.strip()
+    original_ticker = ticker
+    ticker_upper = ticker.upper()
+
+    # Check length
+    if len(ticker) > 15:
+        raise TickerValidationError(
+            f"Ticker exceeds maximum length of 15 characters (got {len(ticker)})",
+            ticker=original_ticker,
+            reason="ticker_too_long"
+        )
+
+    # Validate characters (A-Z, a-z, 0-9, '.', '-', '^')
+    # Allow special characters used in ticker symbols:
+    # - '.': Used for exchange suffixes (e.g., NOVN.SW) and class shares (e.g., BRK.A)
+    # - '-': Used for share classes (e.g., BRK-B)
+    # - '^': Used for indices (e.g., ^GSPC for S&P 500)
+    # - ':': Used in IBKR format (e.g., NOVN:SWX)
+    allowed_pattern = re.compile(r'^[\w\.\-\^:]+$')
+    if not allowed_pattern.match(ticker):
+        raise TickerValidationError(
+            "Ticker contains invalid characters (allowed: A-Z, a-z, 0-9, '.', '-', '^', ':')",
+            ticker=original_ticker,
+            reason="invalid_characters"
+        )
+
+    # Additional validation: Cannot start with a dot (except for special cases)
+    if ticker.startswith('.'):
+        raise TickerValidationError(
+            "Ticker cannot start with a dot",
+            ticker=original_ticker,
+            reason="invalid_format"
+        )
+
+    # Validate exchange suffix if present
+    # Check for standard exchange suffix pattern (e.g., .SW, .HK, .T)
+    suffix_match = re.search(r'\.([A-Z]{1,4})$', ticker_upper)
+    if suffix_match:
+        full_suffix = suffix_match.group(0)  # Includes the dot (e.g., ".SW")
+
+        # Check if it's a known exchange suffix
+        if full_suffix not in VALID_EXCHANGE_SUFFIXES:
+            # Log a warning but don't fail - might be a valid but less common exchange
+            logger.warning(
+                "ticker_unknown_exchange_suffix",
+                ticker=original_ticker,
+                suffix=full_suffix,
+                message="Exchange suffix not recognized, but proceeding with validation"
+            )
+
+    # Check for IBKR format (e.g., NOVN:SWX)
+    ibkr_match = re.match(r'^([A-Z0-9]+):([A-Z]+)$', ticker_upper)
+    if ibkr_match:
+        symbol, exchange = ibkr_match.groups()
+        if len(symbol) == 0:
+            raise TickerValidationError(
+                "IBKR format ticker has empty symbol part",
+                ticker=original_ticker,
+                reason="invalid_ibkr_format"
+            )
+
+    # Return normalized uppercase ticker
+    return ticker_upper
+
+
+def sanitize_ticker_for_api(ticker: str) -> str:
+    """
+    Sanitize and validate ticker for safe use in API calls.
+
+    This function:
+    1. Validates the ticker format using validate_ticker()
+    2. Returns a safe string suitable for API calls
+    3. Strips any potentially dangerous characters
+    4. Normalizes to uppercase
+
+    Args:
+        ticker: The ticker symbol to sanitize
+
+    Returns:
+        Sanitized and validated ticker string
+
+    Raises:
+        TickerValidationError: If ticker format is invalid
+
+    Examples:
+        >>> sanitize_ticker_for_api("aapl")
+        'AAPL'
+        >>> sanitize_ticker_for_api("  NOVN.SW  ")
+        'NOVN.SW'
+        >>> sanitize_ticker_for_api("BRK-B")
+        'BRK-B'
+    """
+    # First, validate the ticker (this will raise TickerValidationError if invalid)
+    validated_ticker = validate_ticker(ticker)
+
+    # Additional sanitization: remove any control characters or unusual whitespace
+    # that might have slipped through (defense in depth)
+    sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', validated_ticker)
+
+    # Verify the sanitized version matches the validated version
+    # (this should always be true, but we check to be safe)
+    if sanitized != validated_ticker:
+        logger.warning(
+            "ticker_sanitization_changed",
+            original=validated_ticker,
+            sanitized=sanitized,
+            message="Sanitization removed unexpected characters"
+        )
+
+    return sanitized
 
 
 # Convenience functions

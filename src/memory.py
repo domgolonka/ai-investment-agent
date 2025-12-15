@@ -22,6 +22,11 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from src.config import config
+from src.exceptions import (
+    MemoryInitError,
+    MemoryQueryError,
+    MemoryStorageError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -74,21 +79,54 @@ class FinancialSituationMemory:
                 test_embedding = self.embeddings.embed_query("initialization test")
                 if not test_embedding or len(test_embedding) == 0:
                     raise ValueError("Embedding test returned empty result")
-            except Exception as e:
-                logger.warning(f"Embedding initialization test failed: {e}")
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "embedding_test_validation_failed",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    collection=name
+                )
                 # Don't fail completely, might be transient
+            except (ConnectionError, TimeoutError) as e:
+                logger.warning(
+                    "embedding_test_network_failed",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    collection=name
+                )
+                # Don't fail completely, network issues are often transient
             
             logger.info(
                 "embeddings_initialized",
                 model="text-embedding-004",
                 collection=name
             )
-            
-        except Exception as e:
+
+        except (ValueError, TypeError, KeyError) as e:
             logger.warning(
-                "embeddings_init_failed",
+                "embeddings_init_config_failed",
                 error=str(e),
-                collection=name
+                error_type=type(e).__name__,
+                collection=name,
+                reason="Invalid configuration or missing API key"
+            )
+            return
+        except (ImportError, ModuleNotFoundError) as e:
+            logger.warning(
+                "embeddings_init_import_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=name,
+                reason="Required embedding module not installed"
+            )
+            return
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(
+                "embeddings_init_network_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=name,
+                reason="Network or connection error during initialization"
             )
             return
         
@@ -125,7 +163,7 @@ class FinancialSituationMemory:
             )
             
             self.available = True
-            
+
             # Log collection stats
             count = self.situation_collection.count()
             logger.info(
@@ -134,14 +172,42 @@ class FinancialSituationMemory:
                 persist_dir=str(config.chroma_persist_directory),
                 existing_documents=count
             )
-            
-        except Exception as e:
+
+        except (ImportError, ModuleNotFoundError) as e:
             logger.warning(
-                "chromadb_init_failed",
+                "chromadb_import_failed",
                 error=str(e),
-                collection=name
+                error_type=type(e).__name__,
+                collection=name,
+                reason="ChromaDB not installed"
             )
             self.available = False
+        except (PermissionError, OSError, IOError) as e:
+            logger.warning(
+                "chromadb_filesystem_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=name,
+                persist_dir=str(config.chroma_persist_directory),
+                reason="File system error accessing ChromaDB storage"
+            )
+            self.available = False
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "chromadb_config_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=name,
+                reason="Invalid ChromaDB configuration"
+            )
+            self.available = False
+        except RuntimeError as e:
+            # ChromaDB can raise RuntimeError for various internal issues
+            raise MemoryInitError(
+                message="ChromaDB runtime initialization failed",
+                component="chromadb",
+                cause=e
+            ) from e
     
     @retry(
         stop=stop_after_attempt(3),
@@ -173,9 +239,23 @@ class FinancialSituationMemory:
             from src.llms import GLOBAL_RATE_LIMITER
             async with GLOBAL_RATE_LIMITER:
                 embedding = await self.embeddings.aembed_query(truncated_text)
-        except Exception:
+        except (ImportError, ModuleNotFoundError, AttributeError) as e:
             # Fallback if rate limiter not available or incompatible (e.g., in tests)
-            # Catch all exceptions to handle import errors, attribute errors, type errors, etc.
+            logger.debug(
+                "rate_limiter_unavailable_fallback",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=self.name
+            )
+            embedding = await self.embeddings.aembed_query(truncated_text)
+        except (TypeError, RuntimeError) as e:
+            # Handle incompatible rate limiter (e.g., wrong context manager type in tests)
+            logger.debug(
+                "rate_limiter_incompatible_fallback",
+                error=str(e),
+                error_type=type(e).__name__,
+                collection=self.name
+            )
             embedding = await self.embeddings.aembed_query(truncated_text)
 
         if not embedding or len(embedding) == 0:
@@ -240,16 +320,58 @@ class FinancialSituationMemory:
                 count=len(situations),
                 has_metadata=metadata is not None
             )
-            
+
             return True
-            
-        except Exception as e:
+
+        except ValueError as e:
             logger.error(
-                "add_situations_failed",
+                "add_situations_validation_failed",
                 collection=self.name,
-                error=str(e)
+                error=str(e),
+                error_type="ValueError",
+                situation_count=len(situations)
             )
             return False
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(
+                "add_situations_network_failed",
+                collection=self.name,
+                error=str(e),
+                error_type=type(e).__name__,
+                situation_count=len(situations)
+            )
+            raise MemoryStorageError(
+                message="Network error while adding situations to memory",
+                operation="add",
+                collection=self.name,
+                cause=e
+            ) from e
+        except (PermissionError, OSError, IOError) as e:
+            logger.error(
+                "add_situations_storage_failed",
+                collection=self.name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            raise MemoryStorageError(
+                message="Storage error while adding situations to memory",
+                operation="add",
+                collection=self.name,
+                cause=e
+            ) from e
+        except RuntimeError as e:
+            logger.error(
+                "add_situations_runtime_failed",
+                collection=self.name,
+                error=str(e),
+                error_type="RuntimeError"
+            )
+            raise MemoryStorageError(
+                message="Runtime error while adding situations to memory",
+                operation="add",
+                collection=self.name,
+                cause=e
+            ) from e
     
     async def query_similar_situations(
         self,
@@ -303,16 +425,53 @@ class FinancialSituationMemory:
                 collection=self.name,
                 results_found=len(formatted_results)
             )
-            
+
             return formatted_results
-            
-        except Exception as e:
+
+        except ValueError as e:
             logger.error(
-                "query_similar_situations_failed",
+                "query_similar_situations_validation_failed",
                 collection=self.name,
-                error=str(e)
+                query_preview=query_text[:100] if query_text else None,
+                error=str(e),
+                error_type="ValueError"
             )
             return []
+        except (KeyError, IndexError) as e:
+            logger.error(
+                "query_similar_situations_result_parsing_failed",
+                collection=self.name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return []
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(
+                "query_similar_situations_network_failed",
+                collection=self.name,
+                query_preview=query_text[:100] if query_text else None,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            raise MemoryQueryError(
+                message="Network error while querying memory",
+                collection=self.name,
+                query=query_text[:100] if query_text else None,
+                cause=e
+            ) from e
+        except RuntimeError as e:
+            logger.error(
+                "query_similar_situations_runtime_failed",
+                collection=self.name,
+                error=str(e),
+                error_type="RuntimeError"
+            )
+            raise MemoryQueryError(
+                message="Runtime error while querying memory",
+                collection=self.name,
+                query=query_text[:100] if query_text else None,
+                cause=e
+            ) from e
     
     async def get_relevant_memory(
         self,
@@ -448,23 +607,56 @@ class FinancialSituationMemory:
                             )
                         else:
                             results[collection_name] = 0
-                            
-                except Exception as e:
-                    # Try to get name for logging
+
+                except (KeyError, AttributeError, TypeError) as e:
+                    # Handle collection access/iteration errors
                     name = getattr(collection_item, 'name', str(collection_item))
                     logger.error(
-                        "collection_cleanup_failed",
+                        "collection_cleanup_access_failed",
                         collection=name,
-                        error=str(e)
+                        error=str(e),
+                        error_type=type(e).__name__
                     )
                     results[name] = 0
-                    
-        except Exception as e:
+                except (PermissionError, OSError, IOError) as e:
+                    name = getattr(collection_item, 'name', str(collection_item))
+                    logger.error(
+                        "collection_cleanup_storage_failed",
+                        collection=name,
+                        error=str(e),
+                        error_type=type(e).__name__
+                    )
+                    results[name] = 0
+                except RuntimeError as e:
+                    name = getattr(collection_item, 'name', str(collection_item))
+                    logger.error(
+                        "collection_cleanup_runtime_failed",
+                        collection=name,
+                        error=str(e),
+                        error_type="RuntimeError"
+                    )
+                    results[name] = 0
+
+        except (ImportError, ModuleNotFoundError) as e:
             logger.error(
-                "cleanup_all_memories_failed",
-                error=str(e)
+                "cleanup_chromadb_import_failed",
+                error=str(e),
+                error_type=type(e).__name__
             )
-        
+        except (PermissionError, OSError, IOError) as e:
+            logger.error(
+                "cleanup_storage_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                persist_dir=str(config.chroma_persist_directory)
+            )
+        except (ValueError, TypeError) as e:
+            logger.error(
+                "cleanup_config_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
         return results
     
     def get_stats(self) -> Dict[str, Any]:
@@ -488,12 +680,14 @@ class FinancialSituationMemory:
                 "name": self.name,
                 "count": count
             }
-        except Exception as e:
+        except (KeyError, AttributeError) as e:
             # FIX: Gracefully handle deleted collections (zombies)
-            if "does not exist" in str(e) or "Collection not found" in str(e):
+            error_str = str(e)
+            if "does not exist" in error_str or "Collection not found" in error_str:
                 logger.debug(
                     "collection_deleted_externally",
-                    collection=self.name
+                    collection=self.name,
+                    error_type=type(e).__name__
                 )
                 return {
                     "available": False,
@@ -501,17 +695,59 @@ class FinancialSituationMemory:
                     "count": 0,
                     "status": "deleted"
                 }
-            
+
             logger.error(
-                "get_stats_failed",
+                "get_stats_access_failed",
                 collection=self.name,
-                error=str(e)
+                error=error_str,
+                error_type=type(e).__name__
+            )
+            return {
+                "available": False,
+                "name": self.name,
+                "count": 0,
+                "error": error_str
+            }
+        except (PermissionError, OSError, IOError) as e:
+            logger.error(
+                "get_stats_storage_failed",
+                collection=self.name,
+                error=str(e),
+                error_type=type(e).__name__
             )
             return {
                 "available": False,
                 "name": self.name,
                 "count": 0,
                 "error": str(e)
+            }
+        except RuntimeError as e:
+            # Handle ChromaDB-specific runtime errors (e.g., deleted collections)
+            error_str = str(e)
+            if "does not exist" in error_str or "Collection not found" in error_str:
+                logger.debug(
+                    "collection_deleted_externally",
+                    collection=self.name,
+                    error_type="RuntimeError"
+                )
+                return {
+                    "available": False,
+                    "name": self.name,
+                    "count": 0,
+                    "status": "deleted"
+                }
+
+            logger.error(
+                "get_stats_runtime_failed",
+                collection=self.name,
+                error=error_str,
+                error_type="RuntimeError"
+            )
+            return {
+                "available": False,
+                "name": self.name,
+                "count": 0,
+                "error": error_str
             }
 
 
@@ -590,16 +826,44 @@ def create_memory_instances(ticker: str) -> Dict[str, FinancialSituationMemory]:
                 collection_name=name,
                 available=instances[name].available
             )
-        except Exception as e:
+        except MemoryInitError as e:
             logger.error(
-                "ticker_memory_creation_failed",
+                "ticker_memory_creation_init_failed",
                 ticker=ticker,
                 collection_name=name,
-                error=str(e)
+                error=str(e),
+                error_type="MemoryInitError",
+                component=e.details.get("component")
             )
-            # Create a disabled instance
-            instances[name] = FinancialSituationMemory(name)
-    
+            # Create a disabled fallback instance - but this may also fail
+            try:
+                instances[name] = FinancialSituationMemory(name)
+            except MemoryInitError:
+                # If even creating a disabled instance fails, create a minimal stub
+                instances[name] = None  # type: ignore
+        except (ValueError, TypeError) as e:
+            logger.error(
+                "ticker_memory_creation_config_failed",
+                ticker=ticker,
+                collection_name=name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            # Create a disabled fallback instance
+            try:
+                instances[name] = FinancialSituationMemory(name)
+            except (ValueError, TypeError, MemoryInitError):
+                instances[name] = None  # type: ignore
+        except (PermissionError, OSError, IOError) as e:
+            logger.error(
+                "ticker_memory_creation_storage_failed",
+                ticker=ticker,
+                collection_name=name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            instances[name] = None  # type: ignore
+
     return instances
 
 
@@ -691,23 +955,56 @@ def cleanup_all_memories(days: int = 0, ticker: Optional[str] = None) -> Dict[st
                         )
                     else:
                         results[collection_name] = 0
-                        
-            except Exception as e:
-                # Try to get name for logging
+
+            except (KeyError, AttributeError, TypeError) as e:
+                # Handle collection access/iteration errors
                 name = getattr(collection_item, 'name', str(collection_item))
                 logger.error(
-                    "collection_cleanup_failed",
+                    "cleanup_collection_access_failed",
                     collection=name,
-                    error=str(e)
+                    error=str(e),
+                    error_type=type(e).__name__
                 )
                 results[name] = 0
-                
-    except Exception as e:
+            except (PermissionError, OSError, IOError) as e:
+                name = getattr(collection_item, 'name', str(collection_item))
+                logger.error(
+                    "cleanup_collection_storage_failed",
+                    collection=name,
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+                results[name] = 0
+            except RuntimeError as e:
+                name = getattr(collection_item, 'name', str(collection_item))
+                logger.error(
+                    "cleanup_collection_runtime_failed",
+                    collection=name,
+                    error=str(e),
+                    error_type="RuntimeError"
+                )
+                results[name] = 0
+
+    except (ImportError, ModuleNotFoundError) as e:
         logger.error(
-            "cleanup_all_memories_failed",
-            error=str(e)
+            "cleanup_all_chromadb_import_failed",
+            error=str(e),
+            error_type=type(e).__name__
         )
-    
+    except (PermissionError, OSError, IOError) as e:
+        logger.error(
+            "cleanup_all_storage_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            persist_dir=str(config.chroma_persist_directory)
+        )
+    except (ValueError, TypeError) as e:
+        logger.error(
+            "cleanup_all_config_failed",
+            error=str(e),
+            error_type=type(e).__name__
+        )
+
     return results
 
 
@@ -749,25 +1046,69 @@ def get_all_memory_stats() -> Dict[str, Dict[str, Any]]:
                     "count": count,
                     "metadata": metadata
                 }
-            except Exception as e:
+            except (KeyError, AttributeError) as e:
                 name = getattr(collection_item, 'name', str(collection_item))
+                error_str = str(e)
                 # Gracefully handle zombies in all-stats too
-                if "does not exist" in str(e):
+                if "does not exist" in error_str or "Collection not found" in error_str:
                     continue
                 logger.error(
-                    "get_collection_stats_failed",
+                    "get_collection_stats_access_failed",
                     collection=name,
-                    error=str(e)
+                    error=error_str,
+                    error_type=type(e).__name__
+                )
+                stats[name] = {
+                    "count": 0,
+                    "error": error_str
+                }
+            except (PermissionError, OSError, IOError) as e:
+                name = getattr(collection_item, 'name', str(collection_item))
+                logger.error(
+                    "get_collection_stats_storage_failed",
+                    collection=name,
+                    error=str(e),
+                    error_type=type(e).__name__
                 )
                 stats[name] = {
                     "count": 0,
                     "error": str(e)
                 }
-                
-    except Exception as e:
+            except RuntimeError as e:
+                name = getattr(collection_item, 'name', str(collection_item))
+                error_str = str(e)
+                # Gracefully handle zombies (ChromaDB RuntimeError for deleted collections)
+                if "does not exist" in error_str or "Collection not found" in error_str:
+                    continue
+                logger.error(
+                    "get_collection_stats_runtime_failed",
+                    collection=name,
+                    error=error_str,
+                    error_type="RuntimeError"
+                )
+                stats[name] = {
+                    "count": 0,
+                    "error": error_str
+                }
+
+    except (ImportError, ModuleNotFoundError) as e:
         logger.error(
-            "get_all_stats_failed",
-            error=str(e)
+            "get_all_stats_chromadb_import_failed",
+            error=str(e),
+            error_type=type(e).__name__
         )
-    
+    except (PermissionError, OSError, IOError) as e:
+        logger.error(
+            "get_all_stats_storage_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+            persist_dir=str(config.chroma_persist_directory)
+        )
+    except (ValueError, TypeError) as e:
+        logger.error(
+            "get_all_stats_config_failed",
+            error=str(e),
+            error_type=type(e).__name__
+        )
+
     return stats

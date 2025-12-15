@@ -1,0 +1,4 @@
+transaction_id,ticker,type,shares,price,fees,date,currency,dividend_amount,total_amount,notes
+AAPL_BUY_20251114203451938954,AAPL,BUY,50.0,160.0,5.0,2025-11-14,USD,,8005.0,Added to position
+MSFT_SELL_20251204203451939024,MSFT,SELL,20.0,360.0,5.0,2025-12-04,USD,,7195.0,Partial exit
+AAPL_DIVIDEND_20251209203451939078,AAPL,DIVIDEND,0.0,0.0,0.0,2025-12-09,USD,100.0,100.0,Quarterly dividend

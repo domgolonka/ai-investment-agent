@@ -617,8 +617,12 @@ async def main():
                     ticker_obj = yf.Ticker(args.ticker)
                     info = ticker_obj.info
                     company_name = info.get('longName') or info.get('shortName')
-                except:
-                    pass
+                except (ValueError, KeyError, AttributeError, TypeError) as e:
+                    # Data parsing/access errors - company name not critical
+                    logger.debug(f"Could not fetch company name: {e}")
+                except Exception as e:
+                    # Network/API errors - log but don't fail
+                    logger.warning(f"Failed to fetch company name for {args.ticker}: {e}")
                 
                 reporter = QuietModeReporter(args.ticker, company_name, quick_mode=args.quick)
                 report = reporter.generate_report(result, brief_mode=args.brief)

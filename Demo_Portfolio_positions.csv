@@ -1,0 +1,4 @@
+ticker,shares,avg_cost,currency,purchase_date,current_price,current_value,total_cost,unrealized_pnl,unrealized_pnl_pct,notes
+1681.HK,2000.0,50.0,HKD,2025-09-15,55.0,110000.0,100000.0,10000.0,10.0,
+AAPL,150.0,153.36666666666667,USD,2025-09-15,175.0,26250.0,23005.0,3245.0,14.105629211041078,
+MSFT,30.0,300.0,USD,2025-09-15,350.0,10500.0,9000.0,1500.0,16.666666666666664,

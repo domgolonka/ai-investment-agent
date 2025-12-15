@@ -19,6 +19,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.config import config
 # FIX: Use dynamic ticker utils for normalization and name cleaning
 from src.ticker_utils import normalize_ticker, normalize_company_name
+from src.exceptions import (
+    DataFetchError,
+    DataValidationError,
+    DataParsingError,
+    SentimentAnalysisError,
+)
 from src.enhanced_sentiment_toolkit import get_multilingual_sentiment_search
 from src.liquidity_calculation_tool import calculate_liquidity_metrics
 from src.stocktwits_api import StockTwitsAPI
@@ -51,47 +57,66 @@ async def fetch_with_timeout(coroutine, timeout_seconds=10, error_msg="Timeout")
     try:
         return await asyncio.wait_for(coroutine, timeout=timeout_seconds)
     except asyncio.TimeoutError:
-        logger.warning(f"YFINANCE TIMEOUT: {error_msg}")
+        logger.warning("yfinance_timeout", error_msg=error_msg)
         return None
-    except Exception as e:
-        logger.warning(f"YFINANCE ERROR: {error_msg} - {str(e)}")
+    except (ConnectionError, OSError) as e:
+        logger.warning("yfinance_network_error", error_msg=error_msg, error=str(e), error_type=type(e).__name__)
+        return None
+    except ValueError as e:
+        logger.warning("yfinance_value_error", error_msg=error_msg, error=str(e))
+        return None
+    except RuntimeError as e:
+        logger.warning("yfinance_runtime_error", error_msg=error_msg, error=str(e))
         return None
 
 async def extract_company_name_async(ticker_obj) -> str:
     """Robust company name extraction with dynamic cleaning."""
     ticker_str = ticker_obj.ticker
-    
+
     try:
         # 1. Try yfinance fast_info (no network call if cached)
         if hasattr(ticker_obj, 'fast_info'):
             # fast_info is lazy, accessing it triggers load
             pass
-            
+
         # 2. Try standard info with timeout
         info = await fetch_with_timeout(
-            asyncio.to_thread(lambda: ticker_obj.info), 
+            asyncio.to_thread(lambda: ticker_obj.info),
             timeout_seconds=5, error_msg="Name Extraction"
         )
-        
+
         if info:
             long_name = info.get('longName') or info.get('shortName')
             if long_name:
                 # Use dynamic cleaner to strip legal suffixes
                 return normalize_company_name(long_name)
-                
+
         return ticker_str
-        
-    except Exception:
+
+    except (KeyError, AttributeError) as e:
+        logger.debug("company_name_extraction_failed", ticker=ticker_str, error=str(e), error_type=type(e).__name__)
+        return ticker_str
+    except (ValueError, TypeError) as e:
+        logger.debug("company_name_parsing_failed", ticker=ticker_str, error=str(e), error_type=type(e).__name__)
         return ticker_str
 
 def extract_from_dataframe(df: pd.DataFrame, field_name: str, row_index: int = 0) -> Optional[float]:
-    if df is None or df.empty: return None
+    if df is None or df.empty:
+        return None
     try:
         if field_name in df.index:
             val = df.loc[field_name].iloc[row_index]
             return float(val) if not pd.isna(val) else None
         return None
-    except Exception: return None
+    except KeyError:
+        logger.debug("dataframe_field_not_found", field_name=field_name, row_index=row_index)
+        return None
+    except (ValueError, TypeError) as e:
+        logger.debug("dataframe_value_conversion_failed", field_name=field_name, error=str(e))
+        return None
+    except IndexError:
+        logger.debug("dataframe_index_out_of_bounds", field_name=field_name, row_index=row_index)
+        return None
 
 # --- DATA UTILS ---
 
@@ -184,8 +209,26 @@ async def get_financial_metrics(ticker: Annotated[str, "Stock ticker symbol"]) -
             f"- Analyst Opinions: {analyst_count}" if analyst_count is not None else "- Analyst Opinions: Data Unavailable",
         ]
         return "\n".join(report_lines)
-    except Exception as e:
-        return f"Error: {str(e)}"
+    except (KeyError, AttributeError) as e:
+        logger.warning("financial_metrics_data_access_error", ticker=ticker, error=str(e))
+        return f"Error accessing financial data: {str(e)}"
+    except (ValueError, TypeError) as e:
+        logger.warning("financial_metrics_validation_error", ticker=ticker, error=str(e))
+        raise DataValidationError(
+            f"Failed to validate financial metrics for {ticker}",
+            field="financial_metrics",
+            value=str(type(e).__name__),
+            expected="valid numeric data",
+            cause=e
+        )
+    except (ConnectionError, OSError) as e:
+        logger.error("financial_metrics_fetch_error", ticker=ticker, error=str(e))
+        raise DataFetchError(
+            f"Failed to fetch financial metrics for {ticker}",
+            source="market_data_fetcher",
+            ticker=ticker,
+            cause=e
+        )
 
 @tool
 async def get_news(
@@ -230,8 +273,10 @@ async def get_news(
                 if len(sanitized) > 15000:
                     sanitized = sanitized[:15000] + "... [truncated]"
                 results.append(f"=== GENERAL NEWS ===\n{sanitized}\n")
-        except Exception as e:
-            logger.warning(f"General news search failed: {e}")
+        except (ConnectionError, OSError, asyncio.TimeoutError) as e:
+            logger.warning("general_news_search_network_error", ticker=ticker, query=general_query[:100], error=str(e))
+        except (ValueError, TypeError) as e:
+            logger.warning("general_news_search_parsing_error", ticker=ticker, error=str(e))
         
         # 2. Local Search - Use Clean Name
         if local_hint and not search_query:
@@ -244,17 +289,29 @@ async def get_news(
                     if len(sanitized_local) > 15000:
                         sanitized_local = sanitized_local[:15000] + "... [truncated]"
                     results.append(f"=== LOCAL/REGIONAL NEWS SOURCES ===\n{sanitized_local}\n")
-            except Exception as e:
-                logger.warning(f"Local news search failed: {e}")
+            except (ConnectionError, OSError, asyncio.TimeoutError) as e:
+                logger.warning("local_news_search_network_error", ticker=ticker, query=local_query[:100], error=str(e))
+            except (ValueError, TypeError) as e:
+                logger.warning("local_news_search_parsing_error", ticker=ticker, error=str(e))
                 
         if not results:
             return f"No news found for {company_name}."
-            
+
         return f"News Results for {company_name}:\n\n" + "\n".join(results)
-    except Exception as e:
-        logger.error(f"News fetch failed for {ticker}: {e}")
-        # Propagate error message instead of generic "No news found"
-        return f"Error fetching news: {str(e)}"
+    except (KeyError, AttributeError) as e:
+        logger.error("news_fetch_data_error", ticker=ticker, error=str(e), error_type=type(e).__name__)
+        return f"Error accessing news data for {ticker}: {str(e)}"
+    except (ConnectionError, OSError) as e:
+        logger.error("news_fetch_network_error", ticker=ticker, error=str(e))
+        raise DataFetchError(
+            f"Network error fetching news for {ticker}",
+            source="tavily",
+            ticker=ticker,
+            cause=e
+        )
+    except (ValueError, TypeError) as e:
+        logger.error("news_fetch_validation_error", ticker=ticker, error=str(e))
+        return f"Error processing news data for {ticker}: {str(e)}"
 
 @tool
 async def get_yfinance_data(symbol: str, start_date: str = None, end_date: str = None) -> str:
@@ -262,9 +319,27 @@ async def get_yfinance_data(symbol: str, start_date: str = None, end_date: str =
     try:
         normalized = normalize_ticker(symbol)
         hist = await market_data_fetcher.get_historical_prices(normalized)
-        if hist.empty: return "No data"
+        if hist.empty:
+            return "No data"
         return hist.reset_index().to_csv(index=False)
-    except Exception as e: return f"Error: {e}"
+    except (ConnectionError, OSError) as e:
+        logger.error("yfinance_data_network_error", symbol=symbol, error=str(e))
+        raise DataFetchError(
+            f"Network error fetching price data for {symbol}",
+            source="yfinance",
+            ticker=symbol,
+            cause=e
+        )
+    except (ValueError, TypeError) as e:
+        logger.warning("yfinance_data_parsing_error", symbol=symbol, error=str(e))
+        raise DataParsingError(
+            f"Failed to parse price data for {symbol}",
+            expected_type="DataFrame",
+            cause=e
+        )
+    except KeyError as e:
+        logger.warning("yfinance_data_key_error", symbol=symbol, error=str(e))
+        return f"Data unavailable for {symbol}: missing field {str(e)}"
 
 @tool
 async def get_technical_indicators(symbol: str) -> str:
@@ -296,7 +371,27 @@ async def get_technical_indicators(symbol: str) -> str:
             f"Bollinger Upper: {fmt(stock['boll_ub'].iloc[-1])}\n"
             f"Bollinger Lower: {fmt(stock['boll_lb'].iloc[-1])}"
         )
-    except Exception as e: return f"Error: {e}"
+    except (ConnectionError, OSError) as e:
+        logger.error("technical_indicators_network_error", symbol=symbol, error=str(e))
+        raise DataFetchError(
+            f"Network error fetching technical data for {symbol}",
+            source="yfinance",
+            ticker=symbol,
+            cause=e
+        )
+    except KeyError as e:
+        logger.warning("technical_indicators_missing_field", symbol=symbol, field=str(e))
+        return f"Technical data incomplete for {symbol}: missing {str(e)}"
+    except (ValueError, TypeError) as e:
+        logger.warning("technical_indicators_calculation_error", symbol=symbol, error=str(e))
+        raise DataParsingError(
+            f"Failed to calculate technical indicators for {symbol}",
+            expected_type="numeric",
+            cause=e
+        )
+    except IndexError as e:
+        logger.warning("technical_indicators_insufficient_data", symbol=symbol, error=str(e))
+        return f"Insufficient historical data for {symbol} to calculate indicators"
     
 @tool
 async def get_social_media_sentiment(ticker: str) -> str:
@@ -305,8 +400,25 @@ async def get_social_media_sentiment(ticker: str) -> str:
         # Try to resolve company name for better context if needed later
         data = await stocktwits_api.get_sentiment(ticker)
         return str(data)
-    except Exception as e:
-        return f"Error getting sentiment: {str(e)}"
+    except (ConnectionError, OSError, asyncio.TimeoutError) as e:
+        logger.warning("stocktwits_network_error", ticker=ticker, error=str(e))
+        raise SentimentAnalysisError(
+            f"Network error fetching StockTwits sentiment for {ticker}",
+            ticker=ticker,
+            source="stocktwits",
+            cause=e
+        )
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning("stocktwits_parsing_error", ticker=ticker, error=str(e))
+        raise SentimentAnalysisError(
+            f"Failed to parse StockTwits sentiment for {ticker}",
+            ticker=ticker,
+            source="stocktwits",
+            cause=e
+        )
+    except AttributeError as e:
+        logger.warning("stocktwits_api_error", ticker=ticker, error=str(e))
+        return f"StockTwits API configuration error: {str(e)}"
 
 @tool
 async def get_macroeconomic_news(trade_date: str) -> str:
@@ -382,8 +494,20 @@ async def get_fundamental_analysis(ticker: Annotated[str, "Stock ticker symbol"]
         # Case C: Success and ADR info found (or no name available to double check)
         return f"Fundamental Search Results for {ticker}:\n{ticker_results}"
 
-    except Exception as e:
-        return f"Error searching for fundamentals: {e}"
+    except (KeyError, AttributeError) as e:
+        logger.warning("fundamental_analysis_data_error", ticker=ticker, error=str(e))
+        return f"Error accessing fundamental data for {ticker}: {str(e)}"
+    except (ConnectionError, OSError, asyncio.TimeoutError) as e:
+        logger.error("fundamental_analysis_network_error", ticker=ticker, error=str(e))
+        raise DataFetchError(
+            f"Network error fetching fundamental analysis for {ticker}",
+            source="tavily",
+            ticker=ticker,
+            cause=e
+        )
+    except (ValueError, TypeError) as e:
+        logger.warning("fundamental_analysis_validation_error", ticker=ticker, error=str(e))
+        return f"Error processing fundamental data for {ticker}: {str(e)}"
 
 class Toolkit:
     def __init__(self):

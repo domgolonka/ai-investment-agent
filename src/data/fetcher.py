@@ -24,6 +24,12 @@ from dataclasses import dataclass
 from collections import namedtuple
 
 from src.ticker_utils import generate_strict_search_query
+from src.exceptions import (
+    DataFetchError,
+    DataValidationError,
+    DataParsingError,
+    DataSourceUnavailableError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -278,15 +284,22 @@ class SmartMarketDataFetcher:
             pair_symbol = f"{from_curr}{to_curr}=X"
             ticker = yf.Ticker(pair_symbol)
             hist = ticker.history(period="1d")
-            
+
             if not hist.empty:
                 rate = float(hist['Close'].iloc[-1])
                 self.fx_cache[cache_key] = rate
                 self.fx_cache_expiry_time[cache_key] = now + timedelta(seconds=FX_CACHE_TTL_SECONDS)
                 return rate
+        except (KeyError, IndexError) as e:
+            logger.debug("fx_rate_data_access_error", pair=f"{from_curr}/{to_curr}", error=str(e))
+        except ValueError as e:
+            logger.debug("fx_rate_conversion_error", pair=f"{from_curr}/{to_curr}", error=str(e))
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("fx_rate_network_error", pair=f"{from_curr}/{to_curr}", error=str(e))
         except Exception as e:
-            logger.debug("fx_rate_fetch_failed", pair=f"{from_curr}/{to_curr}", error=str(e))
-        
+            logger.warning("fx_rate_fetch_failed", pair=f"{from_curr}/{to_curr}",
+                          error_type=type(e).__name__, error=str(e))
+
         return 1.0
 
     def _extract_from_financial_statements(self, ticker: yf.Ticker, symbol: str) -> Dict[str, Any]:
@@ -311,14 +324,20 @@ class SmartMarketDataFetcher:
                         revenue_series = financials.loc['Total Revenue']
                         current = float(revenue_series.iloc[0])
                         previous = float(revenue_series.iloc[1])
-                        
+
                         if previous and previous != 0:
                             growth = (current - previous) / previous
                             if -0.5 < growth < 5.0:
                                 extracted['revenueGrowth'] = growth
                                 extracted['_revenueGrowth_source'] = 'calculated_from_statements'
-                    except Exception:
-                        pass
+                    except (KeyError, IndexError) as e:
+                        logger.debug("revenue_growth_extraction_failed", symbol=symbol,
+                                    error_type=type(e).__name__, error=str(e))
+                    except (ValueError, TypeError) as e:
+                        logger.debug("revenue_growth_calculation_failed", symbol=symbol,
+                                    error_type=type(e).__name__, error=str(e))
+                    except ZeroDivisionError:
+                        logger.debug("revenue_growth_division_by_zero", symbol=symbol)
                 
                 # Margins
                 try:
@@ -328,22 +347,28 @@ class SmartMarketDataFetcher:
                         if revenue:
                             extracted['grossMargins'] = gross_profit / revenue
                             extracted['_grossMargins_source'] = 'calculated_from_statements'
-                            
+
                     if 'Operating Income' in financials.index and 'Total Revenue' in financials.index:
                         op_income = float(financials.loc['Operating Income'].iloc[0])
                         revenue = float(financials.loc['Total Revenue'].iloc[0])
                         if revenue:
                             extracted['operatingMargins'] = op_income / revenue
                             extracted['_operatingMargins_source'] = 'calculated_from_statements'
-                            
+
                     if 'Net Income' in financials.index and 'Total Revenue' in financials.index:
                         net_income = float(financials.loc['Net Income'].iloc[0])
                         revenue = float(financials.loc['Total Revenue'].iloc[0])
                         if revenue:
                             extracted['profitMargins'] = net_income / revenue
                             extracted['_profitMargins_source'] = 'calculated_from_statements'
-                except Exception:
-                    pass
+                except (KeyError, IndexError) as e:
+                    logger.debug("margins_extraction_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except (ValueError, TypeError) as e:
+                    logger.debug("margins_calculation_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except ZeroDivisionError:
+                    logger.debug("margins_division_by_zero", symbol=symbol)
             
             # CASH FLOW STATEMENT
             if not cashflow.empty:
@@ -352,18 +377,26 @@ class SmartMarketDataFetcher:
                         ocf = float(cashflow.loc['Operating Cash Flow'].iloc[0])
                         extracted['operatingCashflow'] = ocf
                         extracted['_operatingCashflow_source'] = 'extracted_from_statements'
-                    except Exception:
-                        pass
-                
+                    except (KeyError, IndexError) as e:
+                        logger.debug("operating_cashflow_extraction_failed", symbol=symbol,
+                                    error_type=type(e).__name__, error=str(e))
+                    except (ValueError, TypeError) as e:
+                        logger.debug("operating_cashflow_conversion_failed", symbol=symbol,
+                                    error_type=type(e).__name__, error=str(e))
+
                 try:
                     if 'Operating Cash Flow' in cashflow.index and 'Capital Expenditure' in cashflow.index:
                         ocf = float(cashflow.loc['Operating Cash Flow'].iloc[0])
                         capex = float(cashflow.loc['Capital Expenditure'].iloc[0])
-                        fcf = ocf + capex # Capex is usually negative
+                        fcf = ocf + capex  # Capex is usually negative
                         extracted['freeCashflow'] = fcf
                         extracted['_freeCashflow_source'] = 'calculated_from_statements'
-                except Exception:
-                    pass
+                except (KeyError, IndexError) as e:
+                    logger.debug("free_cashflow_extraction_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except (ValueError, TypeError) as e:
+                    logger.debug("free_cashflow_calculation_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
             
             # BALANCE SHEET
             if not balance_sheet.empty:
@@ -374,13 +407,19 @@ class SmartMarketDataFetcher:
                         if current_liabilities:
                             extracted['currentRatio'] = current_assets / current_liabilities
                             extracted['_currentRatio_source'] = 'calculated_from_statements'
-                except Exception:
-                    pass
+                except (KeyError, IndexError) as e:
+                    logger.debug("current_ratio_extraction_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except (ValueError, TypeError) as e:
+                    logger.debug("current_ratio_calculation_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except ZeroDivisionError:
+                    logger.debug("current_ratio_division_by_zero", symbol=symbol)
                 
                 try:
                     debt = None
                     equity = None
-                    
+
                     if 'Total Debt' in balance_sheet.index:
                         debt = float(balance_sheet.loc['Total Debt'].iloc[0])
                     elif 'Long Term Debt' in balance_sheet.index:
@@ -389,21 +428,34 @@ class SmartMarketDataFetcher:
                         if 'Current Debt' in balance_sheet.index:
                             short_term = float(balance_sheet.loc['Current Debt'].iloc[0])
                         debt = long_term + short_term
-                    
+
                     if 'Stockholders Equity' in balance_sheet.index:
                         equity = float(balance_sheet.loc['Stockholders Equity'].iloc[0])
                     elif 'Total Stockholder Equity' in balance_sheet.index:
                         equity = float(balance_sheet.loc['Total Stockholder Equity'].iloc[0])
-                    
+
                     if debt is not None and equity is not None and equity != 0:
                         extracted['debtToEquity'] = debt / equity
                         extracted['_debtToEquity_source'] = 'calculated_from_statements'
-                except Exception:
-                    pass
+                except (KeyError, IndexError) as e:
+                    logger.debug("debt_equity_extraction_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except (ValueError, TypeError) as e:
+                    logger.debug("debt_equity_calculation_failed", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except ZeroDivisionError:
+                    logger.debug("debt_equity_division_by_zero", symbol=symbol)
             
+        except AttributeError as e:
+            logger.debug("statement_extraction_attribute_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+        except (KeyError, IndexError) as e:
+            logger.debug("statement_extraction_data_access_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
         except Exception as e:
-            logger.debug("statement_extraction_failed", symbol=symbol, error=str(e))
-        
+            logger.warning("statement_extraction_unexpected_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+
         return extracted
 
     async def _fetch_yfinance_enhanced(self, symbol: str) -> Optional[Dict]:
@@ -413,26 +465,36 @@ class SmartMarketDataFetcher:
             info = {}
             try:
                 info = ticker.info
-            except Exception:
+            except (KeyError, ValueError) as e:
+                logger.debug("yfinance_info_access_error", symbol=symbol,
+                            error_type=type(e).__name__, error=str(e))
                 info = {}
-            
+            except AttributeError as e:
+                logger.debug("yfinance_info_attribute_error", symbol=symbol,
+                            error_type=type(e).__name__, error=str(e))
+                info = {}
+
             has_price = False
             price_fields = ['currentPrice', 'regularMarketPrice', 'previousClose']
-            
+
             if info:
                 for field in price_fields:
                     if field in info and info[field] is not None:
                         has_price = True
                         break
-            
+
             if not has_price and hasattr(ticker, 'fast_info'):
                 try:
                     fast_price = ticker.fast_info.get('lastPrice')
                     if fast_price:
                         info['currentPrice'] = fast_price
                         has_price = True
-                except:
-                    pass
+                except (AttributeError, KeyError) as e:
+                    logger.debug("yfinance_fast_info_access_error", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
+                except TypeError as e:
+                    logger.debug("yfinance_fast_info_type_error", symbol=symbol,
+                                error_type=type(e).__name__, error=str(e))
             
             if not has_price:
                 logger.warning("yfinance_no_price", symbol=symbol)
@@ -457,8 +519,17 @@ class SmartMarketDataFetcher:
             self.stats['sources']['yfinance'] += 1
             return info
             
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("yfinance_network_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+        except (ValueError, TypeError) as e:
+            logger.warning("yfinance_data_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
         except Exception as e:
-            logger.error("yfinance_enhanced_failed", symbol=symbol, error=str(e))
+            logger.error("yfinance_enhanced_failed", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
             return None
 
     def _fetch_yahooquery_fallback(self, symbol: str) -> Optional[Dict]:
@@ -485,7 +556,17 @@ class SmartMarketDataFetcher:
             
             self.stats['sources']['yahooquery'] += 1
             return combined
-        except Exception:
+        except (KeyError, AttributeError) as e:
+            logger.debug("yahooquery_data_access_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+            return None
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("yahooquery_network_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+        except Exception as e:
+            logger.warning("yahooquery_fallback_failed", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
             return None
 
     async def _fetch_fmp_fallback(self, symbol: str) -> Optional[Dict]:
@@ -512,9 +593,19 @@ class SmartMarketDataFetcher:
             if mapped:
                 self.stats['sources']['fmp'] += 1
                 return mapped
-        except Exception:
+        except (KeyError, TypeError) as e:
+            logger.debug("fmp_data_mapping_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
             return None
-        
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("fmp_network_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+        except Exception as e:
+            logger.warning("fmp_fallback_failed", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+
         return None
 
     async def _fetch_eodhd_fallback(self, symbol: str) -> Optional[Dict]:
@@ -541,8 +632,17 @@ class SmartMarketDataFetcher:
             # If data is None, fetcher might have hit rate limit (logged inside fetcher)
             return None
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("eodhd_network_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+        except (KeyError, TypeError, ValueError) as e:
+            logger.debug("eodhd_data_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+            return None
         except Exception as e:
-            logger.warning("eodhd_fetch_error", symbol=symbol, error=str(e))
+            logger.warning("eodhd_fetch_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
             return None
 
     async def _fetch_av_fallback(self, symbol: str) -> Optional[Dict]:
@@ -569,8 +669,17 @@ class SmartMarketDataFetcher:
             # If data is None, fetcher might have hit rate limit (logged inside fetcher)
             return None
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("alpha_vantage_network_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
+            return None
+        except (KeyError, TypeError, ValueError) as e:
+            logger.debug("alpha_vantage_data_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+            return None
         except Exception as e:
-            logger.warning("alpha_vantage_fetch_error", symbol=symbol, error=str(e))
+            logger.warning("alpha_vantage_fetch_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
             return None
 
     async def _fetch_all_sources_parallel(self, symbol: str) -> Dict[str, Optional[Dict]]:
@@ -598,10 +707,18 @@ class SmartMarketDataFetcher:
             except asyncio.TimeoutError:
                 logger.warning(f"{source_name}_timeout", symbol=symbol)
                 results[source_name] = None
-            except Exception as e:
-                logger.warning(f"{source_name}_error", symbol=symbol, error=str(e))
+            except asyncio.CancelledError:
+                logger.warning(f"{source_name}_cancelled", symbol=symbol)
                 results[source_name] = None
-        
+            except (ConnectionError, OSError) as e:
+                logger.warning(f"{source_name}_connection_error", symbol=symbol,
+                              error_type=type(e).__name__, error=str(e))
+                results[source_name] = None
+            except Exception as e:
+                logger.warning(f"{source_name}_error", symbol=symbol,
+                              error_type=type(e).__name__, error=str(e))
+                results[source_name] = None
+
         return results
 
     def _smart_merge_with_quality(self, source_results: Dict[str, Optional[Dict]], symbol: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -713,7 +830,17 @@ class SmartMarketDataFetcher:
             import yfinance as yf
             ticker_obj = yf.Ticker(symbol)
             company_name = (ticker_obj.info.get('longName') or ticker_obj.info.get('shortName') or symbol)
-        except:
+        except (KeyError, AttributeError) as e:
+            logger.debug("tavily_company_name_lookup_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+            company_name = symbol
+        except (ConnectionError, TimeoutError) as e:
+            logger.debug("tavily_company_name_network_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+            company_name = symbol
+        except Exception as e:
+            logger.debug("tavily_company_name_unexpected_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
             company_name = symbol
         
         fields_to_search = safe_missing_fields[:5]
@@ -745,8 +872,19 @@ class SmartMarketDataFetcher:
                 if result and 'results' in result:
                     combined = "\n".join([i.get('content', '') for i in result['results']])
                     search_results[field] = combined
-            except:
-                pass
+            except asyncio.TimeoutError:
+                logger.debug("tavily_search_timeout", symbol=symbol, field=field)
+            except asyncio.CancelledError:
+                logger.debug("tavily_search_cancelled", symbol=symbol, field=field)
+            except (KeyError, TypeError) as e:
+                logger.debug("tavily_search_result_parse_error", symbol=symbol, field=field,
+                            error_type=type(e).__name__, error=str(e))
+            except (ConnectionError, OSError) as e:
+                logger.debug("tavily_search_network_error", symbol=symbol, field=field,
+                            error_type=type(e).__name__, error=str(e))
+            except Exception as e:
+                logger.debug("tavily_search_failed", symbol=symbol, field=field,
+                            error_type=type(e).__name__, error=str(e))
         
         if not search_results: return {}
         
@@ -785,14 +923,14 @@ class SmartMarketDataFetcher:
                 if roa is not None and de is not None:
                     calculated['returnOnEquity'] = roa * (1 + de)
                     calculated['_returnOnEquity_source'] = 'calculated_from_roa_de'
-            
+
             if data.get('pegRatio') is None:
                 pe = data.get('trailingPE')
                 growth = data.get('earningsGrowth')
                 if pe and growth and growth > 0:
                     calculated['pegRatio'] = pe / (growth * 100)
                     calculated['_pegRatio_source'] = 'calculated_from_pe_growth'
-            
+
             # FIX: Ensure marketCap is calculated if missing
             if data.get('marketCap') is None:
                 price = data.get('currentPrice') or data.get('regularMarketPrice')
@@ -800,7 +938,14 @@ class SmartMarketDataFetcher:
                 if price and shares:
                     calculated['marketCap'] = price * shares
                     calculated['_marketCap_source'] = 'calculated_from_price_shares'
-        except: pass
+        except (TypeError, ValueError) as e:
+            logger.debug("derived_metrics_calculation_error", symbol=symbol,
+                        error_type=type(e).__name__, error=str(e))
+        except ZeroDivisionError:
+            logger.debug("derived_metrics_division_by_zero", symbol=symbol)
+        except Exception as e:
+            logger.warning("derived_metrics_unexpected_error", symbol=symbol,
+                          error_type=type(e).__name__, error=str(e))
         return calculated
 
     def _merge_data(self, primary: Dict, *fallbacks: Dict) -> MergeResult:
@@ -941,9 +1086,26 @@ class SmartMarketDataFetcher:
             })
             
             return merged
-            
+
+        except asyncio.CancelledError:
+            logger.warning("fetch_cancelled", ticker=ticker)
+            raise  # Re-raise CancelledError to allow proper cancellation handling
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.error("fetch_network_error", ticker=ticker,
+                        error_type=type(e).__name__, error=str(e))
+            raise DataFetchError(
+                f"Network error fetching data for {ticker}",
+                source="multi_source_fetcher",
+                ticker=ticker,
+                cause=e
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error("fetch_data_processing_error", ticker=ticker,
+                        error_type=type(e).__name__, error=str(e))
+            return {"error": str(e), "symbol": ticker}
         except Exception as e:
-            logger.error("unexpected_fetch_error", ticker=ticker, error=str(e))
+            logger.error("unexpected_fetch_error", ticker=ticker,
+                        error_type=type(e).__name__, error=str(e))
             return {"error": str(e), "symbol": ticker}
 
     async def get_historical_prices(self, ticker: str, period: str = "1y") -> pd.DataFrame:
@@ -952,8 +1114,20 @@ class SmartMarketDataFetcher:
             stock = yf.Ticker(ticker)
             hist = await asyncio.to_thread(stock.history, period=period)
             return hist
+        except asyncio.CancelledError:
+            logger.warning("history_fetch_cancelled", ticker=ticker)
+            raise
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning("history_fetch_network_error", ticker=ticker,
+                          error_type=type(e).__name__, error=str(e))
+            return pd.DataFrame()
+        except (ValueError, KeyError) as e:
+            logger.warning("history_fetch_data_error", ticker=ticker,
+                          error_type=type(e).__name__, error=str(e))
+            return pd.DataFrame()
         except Exception as e:
-            logger.error("history_fetch_failed", ticker=ticker, error=str(e))
+            logger.error("history_fetch_failed", ticker=ticker,
+                        error_type=type(e).__name__, error=str(e))
             return pd.DataFrame()
     
     def get_stats(self) -> Dict[str, Any]:
