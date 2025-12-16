@@ -372,7 +372,22 @@ class FinancialSituationMemory:
                 collection=self.name,
                 cause=e
             ) from e
-    
+        except Exception as e:
+            # Handle ChromaDB NotFoundError (collection was deleted externally)
+            if type(e).__name__ == "NotFoundError" or "does not exist" in str(e):
+                logger.warning(
+                    "collection_deleted_during_add",
+                    collection=self.name,
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+                # Mark as unavailable to prevent further failed operations
+                self.available = False
+                self.situation_collection = None
+                return False
+            # Re-raise if it's not a NotFoundError
+            raise
+
     async def query_similar_situations(
         self,
         query_text: str,
@@ -472,6 +487,22 @@ class FinancialSituationMemory:
                 query=query_text[:100] if query_text else None,
                 cause=e
             ) from e
+        except Exception as e:
+            # Handle ChromaDB NotFoundError (collection was deleted externally)
+            # We check by exception name to avoid importing chromadb at module level
+            if type(e).__name__ == "NotFoundError" or "does not exist" in str(e):
+                logger.warning(
+                    "collection_deleted_during_query",
+                    collection=self.name,
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+                # Mark as unavailable to prevent further failed queries
+                self.available = False
+                self.situation_collection = None
+                return []
+            # Re-raise if it's not a NotFoundError
+            raise
     
     async def get_relevant_memory(
         self,

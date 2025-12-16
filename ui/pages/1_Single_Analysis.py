@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import json
+from typing import Any
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -47,15 +48,41 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 
+def make_json_serializable(obj: Any) -> Any:
+    """Convert objects to JSON-serializable format, handling LangChain messages."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [make_json_serializable(item) for item in obj]
+    # Handle LangChain message objects (HumanMessage, AIMessage, etc.)
+    if hasattr(obj, 'content'):
+        return str(obj.content)
+    # Handle datetime objects
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    # Fallback: convert to string
+    return str(obj)
+
+
 def export_to_markdown(result: dict, ticker: str) -> str:
     """Export analysis results to markdown format."""
     md_content = f"# Investment Analysis: {ticker}\n\n"
     md_content += f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
     md_content += "---\n\n"
 
+    def to_string(value) -> str:
+        """Convert a value to string, handling lists and other types."""
+        if isinstance(value, list):
+            return "\n".join(str(item) for item in value)
+        return str(value) if value else ""
+
     if result.get("final_trade_decision"):
         md_content += "## Final Decision\n\n"
-        md_content += result["final_trade_decision"] + "\n\n"
+        md_content += to_string(result["final_trade_decision"]) + "\n\n"
 
     sections = [
         ("market_report", "Market Analysis"),
@@ -69,7 +96,7 @@ def export_to_markdown(result: dict, ticker: str) -> str:
     for key, title in sections:
         if result.get(key):
             md_content += f"## {title}\n\n"
-            md_content += result[key] + "\n\n"
+            md_content += to_string(result[key]) + "\n\n"
 
     return md_content
 
@@ -248,8 +275,8 @@ def main():
             )
 
         with col2:
-            # Export to JSON
-            json_content = json.dumps(result, indent=2)
+            # Export to JSON (sanitize to handle LangChain message objects)
+            json_content = json.dumps(make_json_serializable(result), indent=2)
             st.download_button(
                 label="📋 Export JSON",
                 data=json_content,
