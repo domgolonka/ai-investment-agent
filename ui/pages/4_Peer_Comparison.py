@@ -122,7 +122,7 @@ async def find_peers(ticker: str):
 async def compare_peers(ticker: str, peers: list):
     """Compare ticker with peers."""
     comparator = PeerComparator()
-    comparison = await comparator.compare_metrics(ticker, peers)
+    comparison = await comparator.compare_all(ticker, peers)
     return comparison
 
 
@@ -286,57 +286,78 @@ def main():
         with tab1:
             st.markdown("### Valuation Metrics")
 
-            # Sample valuation data (replace with actual comparison data)
-            valuation_data = {
-                'Company': [ticker] + peers,
-                'P/E Ratio': [25.4, 28.1, 22.3, 19.7, 31.2],
-                'P/B Ratio': [7.2, 6.8, 5.9, 4.3, 8.1],
-                'EV/EBITDA': [18.5, 20.1, 16.3, 14.8, 22.4],
-                'Price/Sales': [6.3, 7.1, 5.4, 4.8, 8.2]
-            }
-
-            df_valuation = pd.DataFrame(valuation_data)
-            st.dataframe(df_valuation, use_container_width=True, hide_index=True)
+            if comparison.valuation and comparison.valuation.metrics:
+                valuation_rows = []
+                for metric_name, metric_comp in comparison.valuation.metrics.items():
+                    valuation_rows.append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        f'{ticker} Value': f"{metric_comp.ticker_value:.2f}" if metric_comp.ticker_value else "N/A",
+                        'Peer Median': f"{metric_comp.peer_median:.2f}",
+                        'Peer Avg': f"{metric_comp.peer_average:.2f}",
+                        'Rank': f"{metric_comp.ranking}/{metric_comp.total_ranked}" if metric_comp.ranking else "N/A",
+                        'Percentile': f"{metric_comp.percentile_rank:.0f}%"
+                    })
+                df_valuation = pd.DataFrame(valuation_rows)
+                st.dataframe(df_valuation, use_container_width=True, hide_index=True)
+            else:
+                st.info("No valuation data available")
 
         with tab2:
             st.markdown("### Growth Metrics")
 
-            growth_data = {
-                'Company': [ticker] + peers,
-                'Revenue Growth (%)': [12.5, 15.2, 10.8, 8.3, 18.9],
-                'EPS Growth (%)': [18.2, 20.5, 14.3, 11.7, 25.1],
-                'Asset Growth (%)': [8.7, 10.2, 7.5, 6.1, 12.4]
-            }
-
-            df_growth = pd.DataFrame(growth_data)
-            st.dataframe(df_growth, use_container_width=True, hide_index=True)
+            if comparison.growth and comparison.growth.metrics:
+                growth_rows = []
+                for metric_name, metric_comp in comparison.growth.metrics.items():
+                    growth_rows.append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        f'{ticker} Value': f"{metric_comp.ticker_value:.2f}" if metric_comp.ticker_value else "N/A",
+                        'Peer Median': f"{metric_comp.peer_median:.2f}",
+                        'Peer Avg': f"{metric_comp.peer_average:.2f}",
+                        'Rank': f"{metric_comp.ranking}/{metric_comp.total_ranked}" if metric_comp.ranking else "N/A",
+                        'Percentile': f"{metric_comp.percentile_rank:.0f}%"
+                    })
+                df_growth = pd.DataFrame(growth_rows)
+                st.dataframe(df_growth, use_container_width=True, hide_index=True)
+            else:
+                st.info("No growth data available")
 
         with tab3:
             st.markdown("### Profitability Metrics")
 
-            profit_data = {
-                'Company': [ticker] + peers,
-                'Net Margin (%)': [25.3, 28.1, 22.7, 19.4, 31.5],
-                'ROE (%)': [48.2, 52.3, 43.1, 38.7, 56.8],
-                'ROA (%)': [18.5, 20.1, 16.8, 14.2, 22.7],
-                'ROIC (%)': [32.1, 35.4, 28.9, 24.5, 38.2]
-            }
-
-            df_profit = pd.DataFrame(profit_data)
-            st.dataframe(df_profit, use_container_width=True, hide_index=True)
+            if comparison.profitability and comparison.profitability.metrics:
+                profit_rows = []
+                for metric_name, metric_comp in comparison.profitability.metrics.items():
+                    profit_rows.append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        f'{ticker} Value': f"{metric_comp.ticker_value:.2f}" if metric_comp.ticker_value else "N/A",
+                        'Peer Median': f"{metric_comp.peer_median:.2f}",
+                        'Peer Avg': f"{metric_comp.peer_average:.2f}",
+                        'Rank': f"{metric_comp.ranking}/{metric_comp.total_ranked}" if metric_comp.ranking else "N/A",
+                        'Percentile': f"{metric_comp.percentile_rank:.0f}%"
+                    })
+                df_profit = pd.DataFrame(profit_rows)
+                st.dataframe(df_profit, use_container_width=True, hide_index=True)
+            else:
+                st.info("No profitability data available")
 
         with tab4:
             st.markdown("### Financial Health Metrics")
 
-            health_data = {
-                'Company': [ticker] + peers,
-                'Current Ratio': [1.8, 2.1, 1.6, 1.4, 2.3],
-                'Debt/Equity': [0.45, 0.38, 0.52, 0.61, 0.33],
-                'Interest Coverage': [28.5, 32.1, 24.3, 19.8, 35.7]
-            }
-
-            df_health = pd.DataFrame(health_data)
-            st.dataframe(df_health, use_container_width=True, hide_index=True)
+            if comparison.financial_health and comparison.financial_health.metrics:
+                health_rows = []
+                for metric_name, metric_comp in comparison.financial_health.metrics.items():
+                    health_rows.append({
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        f'{ticker} Value': f"{metric_comp.ticker_value:.2f}" if metric_comp.ticker_value else "N/A",
+                        'Peer Median': f"{metric_comp.peer_median:.2f}",
+                        'Peer Avg': f"{metric_comp.peer_average:.2f}",
+                        'Rank': f"{metric_comp.ranking}/{metric_comp.total_ranked}" if metric_comp.ranking else "N/A",
+                        'Percentile': f"{metric_comp.percentile_rank:.0f}%"
+                    })
+                df_health = pd.DataFrame(health_rows)
+                st.dataframe(df_health, use_container_width=True, hide_index=True)
+            else:
+                st.info("No financial health data available")
 
         st.markdown("---")
 

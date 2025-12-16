@@ -27,6 +27,25 @@ def render_analysis_section(
     if not content:
         return
 
+    # Convert content to string based on its type
+    if isinstance(content, dict):
+        # Handle Gemini API response format: {'type': 'text', 'text': '...'}
+        if 'text' in content:
+            content = content['text']
+        else:
+            content = str(content)
+    elif isinstance(content, list):
+        # Handle list of items (could be dicts or strings)
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and 'text' in item:
+                parts.append(item['text'])
+            else:
+                parts.append(str(item))
+        content = "\n".join(parts)
+    else:
+        content = str(content) if content else ""
+
     # Calculate word count
     word_count = len(content.split())
 

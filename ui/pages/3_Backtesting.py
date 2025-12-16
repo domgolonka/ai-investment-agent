@@ -254,7 +254,7 @@ def main():
                 config = BacktestConfig(
                     initial_capital=initial_capital,
                     position_size=position_size,
-                    commission=commission
+                    commission_rate=commission
                 )
 
                 engine = BacktestEngine(

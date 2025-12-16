@@ -75,9 +75,20 @@ def export_to_markdown(result: dict, ticker: str) -> str:
     md_content += "---\n\n"
 
     def to_string(value) -> str:
-        """Convert a value to string, handling lists and other types."""
+        """Convert a value to string, handling dicts, lists and other types."""
+        if isinstance(value, dict):
+            # Handle Gemini API response format: {'type': 'text', 'text': '...'}
+            if 'text' in value:
+                return value['text']
+            return str(value)
         if isinstance(value, list):
-            return "\n".join(str(item) for item in value)
+            parts = []
+            for item in value:
+                if isinstance(item, dict) and 'text' in item:
+                    parts.append(item['text'])
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
         return str(value) if value else ""
 
     if result.get("final_trade_decision"):

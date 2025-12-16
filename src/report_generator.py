@@ -27,11 +27,19 @@ class QuietModeReporter:
 
     def _normalize_string(self, content: Any) -> str:
         """
-        Safely convert content to string, handling lists from LangGraph state accumulation.
+        Safely convert content to string, handling lists and dicts from LangGraph state accumulation.
         FIXED: Deduplicates list items to prevent repetition loop artifacts.
+        FIXED: Handles Gemini API dict format {'type': 'text', 'text': '...'}.
         """
         if content is None:
             return ""
+
+        # Handle Gemini API response format: {'type': 'text', 'text': '...'}
+        if isinstance(content, dict):
+            if 'text' in content:
+                return str(content['text'])
+            # Fallback for other dict formats
+            return str(content)
 
         if isinstance(content, list):
             # Deduplication logic
@@ -40,7 +48,11 @@ class QuietModeReporter:
             for item in content:
                 if not item:
                     continue
-                item_str = str(item).strip()
+                # Handle dicts within lists
+                if isinstance(item, dict) and 'text' in item:
+                    item_str = str(item['text']).strip()
+                else:
+                    item_str = str(item).strip()
                 # Simple hash check for duplicates
                 # We check if the first 100 chars match to catch near-duplicates
                 # or identical tool outputs repeated in the loop
