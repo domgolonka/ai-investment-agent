@@ -23,6 +23,71 @@ from src.backtesting import (
 from ui.components.chart_view import render_equity_curve
 from ui.utils import format_currency, format_percentage, validate_ticker
 
+
+# Built-in trading strategies
+def buy_and_hold_strategy(data, date):
+    """Buy and hold strategy - always hold."""
+    return "BUY"
+
+
+def sma_crossover_strategy(data, date, short_window=20, long_window=50):
+    """Simple Moving Average crossover strategy."""
+    if len(data.loc[:date]) < long_window:
+        return "HOLD"
+
+    short_ma = data.loc[:date, 'Close'].rolling(window=short_window).mean().iloc[-1]
+    long_ma = data.loc[:date, 'Close'].rolling(window=long_window).mean().iloc[-1]
+
+    if short_ma > long_ma:
+        return "BUY"
+    elif short_ma < long_ma:
+        return "SELL"
+    return "HOLD"
+
+
+def rsi_strategy(data, date, period=14, oversold=30, overbought=70):
+    """RSI-based mean reversion strategy."""
+    if len(data.loc[:date]) < period + 1:
+        return "HOLD"
+
+    prices = data.loc[:date, 'Close']
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+    rs = gain.iloc[-1] / loss.iloc[-1] if loss.iloc[-1] != 0 else 0
+    rsi = 100 - (100 / (1 + rs))
+
+    if rsi < oversold:
+        return "BUY"
+    elif rsi > overbought:
+        return "SELL"
+    return "HOLD"
+
+
+def momentum_strategy(data, date, lookback=20):
+    """Momentum strategy - buy on positive momentum."""
+    if len(data.loc[:date]) < lookback:
+        return "HOLD"
+
+    prices = data.loc[:date, 'Close']
+    momentum = (prices.iloc[-1] - prices.iloc[-lookback]) / prices.iloc[-lookback]
+
+    if momentum > 0.02:  # 2% positive momentum
+        return "BUY"
+    elif momentum < -0.02:  # 2% negative momentum
+        return "SELL"
+    return "HOLD"
+
+
+STRATEGIES = {
+    "Buy and Hold": buy_and_hold_strategy,
+    "SMA Crossover (20/50)": lambda data, date: sma_crossover_strategy(data, date, 20, 50),
+    "SMA Crossover (10/30)": lambda data, date: sma_crossover_strategy(data, date, 10, 30),
+    "RSI Mean Reversion": rsi_strategy,
+    "Momentum": momentum_strategy,
+}
+
 st.set_page_config(
     page_title="Backtesting - AI Investment Agent",
     page_icon="🔬",
@@ -135,20 +200,31 @@ def display_trade_history(result):
     """Display trade history table."""
     st.markdown("### Trade History")
 
-    if hasattr(result, 'trades') and result.trades:
-        trades_data = []
+    if hasattr(result, 'trades') and result.trades is not None and not result.trades.empty:
+        # result.trades is already a DataFrame from get_trade_log()
+        df = result.trades.copy()
 
-        for trade in result.trades:
-            trades_data.append({
-                'Date': trade.date if hasattr(trade, 'date') else '',
-                'Type': trade.type if hasattr(trade, 'type') else '',
-                'Price': format_currency(trade.price) if hasattr(trade, 'price') else '',
-                'Quantity': trade.quantity if hasattr(trade, 'quantity') else '',
-                'Value': format_currency(trade.value) if hasattr(trade, 'value') else '',
-                'P&L': format_currency(trade.pnl) if hasattr(trade, 'pnl') else ''
-            })
+        # Format columns for display if they exist
+        if 'price' in df.columns:
+            df['price'] = df['price'].apply(lambda x: format_currency(x) if pd.notna(x) else '')
+        if 'value' in df.columns:
+            df['value'] = df['value'].apply(lambda x: format_currency(x) if pd.notna(x) else '')
+        if 'pnl' in df.columns:
+            df['pnl'] = df['pnl'].apply(lambda x: format_currency(x) if pd.notna(x) else '')
 
-        df = pd.DataFrame(trades_data)
+        # Rename columns for better display
+        column_renames = {
+            'date': 'Date',
+            'ticker': 'Ticker',
+            'direction': 'Type',
+            'shares': 'Shares',
+            'price': 'Price',
+            'value': 'Value',
+            'pnl': 'P&L',
+            'commission': 'Commission'
+        }
+        df = df.rename(columns={k: v for k, v in column_renames.items() if k in df.columns})
+
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No trades executed during backtest period")
@@ -191,6 +267,15 @@ def main():
                 value=datetime.now(),
                 max_value=datetime.now()
             )
+
+        # Strategy selection
+        st.markdown("### Strategy Selection")
+
+        strategy_name = st.selectbox(
+            "Trading Strategy",
+            options=list(STRATEGIES.keys()),
+            help="Select a trading strategy to backtest"
+        )
 
         # Strategy parameters
         st.markdown("### Strategy Parameters")
@@ -258,16 +343,19 @@ def main():
                 )
 
                 engine = BacktestEngine(
-                    initial_capital=initial_capital,
-                    position_size=position_size,
+                    config=config,
                     data_loader=data_loader
                 )
+
+                # Get selected strategy function
+                strategy_func = STRATEGIES[strategy_name]
 
                 # Run backtest
                 result = engine.run_backtest(
                     ticker=ticker,
                     start_date=start_date.strftime("%Y-%m-%d"),
-                    end_date=end_date.strftime("%Y-%m-%d")
+                    end_date=end_date.strftime("%Y-%m-%d"),
+                    strategy_func=strategy_func
                 )
 
                 # Store result in session state
@@ -301,9 +389,14 @@ def main():
         # Equity curve
         st.markdown("### Equity Curve")
 
-        if hasattr(result, 'equity_curve') and result.equity_curve:
+        if hasattr(result, 'equity_curve') and result.equity_curve is not None and not result.equity_curve.empty:
+            # Convert Series to DataFrame with required columns
+            equity_df = pd.DataFrame({
+                'date': result.equity_curve.index,
+                'equity': result.equity_curve.values
+            })
             render_equity_curve(
-                result.equity_curve,
+                equity_df,
                 ticker=st.session_state.backtest_ticker
             )
         else:
@@ -360,21 +453,9 @@ def main():
                     st.error(f"Error generating report: {str(e)}")
 
         with col2:
-            if hasattr(result, 'trades') and result.trades:
-                # Export trades to CSV
-                trades_data = []
-                for trade in result.trades:
-                    trades_data.append({
-                        'date': trade.date if hasattr(trade, 'date') else '',
-                        'type': trade.type if hasattr(trade, 'type') else '',
-                        'price': trade.price if hasattr(trade, 'price') else 0,
-                        'quantity': trade.quantity if hasattr(trade, 'quantity') else 0,
-                        'value': trade.value if hasattr(trade, 'value') else 0,
-                        'pnl': trade.pnl if hasattr(trade, 'pnl') else 0
-                    })
-
-                df = pd.DataFrame(trades_data)
-                csv_data = df.to_csv(index=False)
+            if hasattr(result, 'trades') and result.trades is not None and not result.trades.empty:
+                # Export trades to CSV - result.trades is already a DataFrame
+                csv_data = result.trades.to_csv(index=False)
 
                 st.download_button(
                     label="📥 Export Trades CSV",

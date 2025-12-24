@@ -160,3 +160,4 @@ reports/
 # Local configuration overrides
 local_config.py
 config.local.py
+data

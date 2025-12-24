@@ -53,6 +53,7 @@ from .manager import (
 )
 from .pnl import PnLCalculator
 from .storage import PortfolioStorage, StorageError
+from .watchlist import WatchlistItem
 
 __all__ = [
     # Position management
@@ -77,6 +78,9 @@ __all__ = [
     # Storage
     "PortfolioStorage",
     "StorageError",
+
+    # Watchlist
+    "WatchlistItem",
 ]
 
 __version__ = "1.0.0"

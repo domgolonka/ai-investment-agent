@@ -365,62 +365,83 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("### Overall Rankings")
+            st.markdown("### Overall Score")
 
-            # Sample ranking data
-            ranking_data = pd.DataFrame({
-                'ticker': [ticker] + peers,
-                'score': [85, 78, 82, 71, 88]
-            }).sort_values('score', ascending=False)
-
-            for idx, row in ranking_data.iterrows():
-                rank = idx + 1
-                rank_class = f"rank-{rank}" if rank <= 3 else "rank-other"
-
+            if comparison.overall_score is not None:
                 st.markdown(f"""
-                <div class="peer-card">
-                    <span class="rank-badge {rank_class}">#{rank}</span>
-                    <strong style="margin-left: 1rem;">{row['ticker']}</strong>
-                    <span style="float: right; color: #667eea; font-weight: bold;">Score: {row['score']}</span>
+                <div class="peer-card" style="border: 2px solid #667eea;">
+                    <strong>{ticker}</strong>
+                    <span style="float: right; color: #667eea; font-weight: bold;">Score: {comparison.overall_score:.1f}/100</span>
                 </div>
                 """, unsafe_allow_html=True)
 
+                # Show category scores
+                category_scores = comparison.get_category_scores()
+                if category_scores:
+                    ranking_data = pd.DataFrame([
+                        {'Category': cat.replace('_', ' ').title(), 'Score': f"{score:.1f}"}
+                        for cat, score in category_scores.items()
+                    ])
+                    st.dataframe(ranking_data, use_container_width=True, hide_index=True)
+            else:
+                st.info("No overall score available")
+
         with col2:
-            st.markdown("### Performance Comparison")
-            render_ranking_chart(ranking_data)
+            st.markdown("### Category Scores")
+
+            category_scores = comparison.get_category_scores()
+            if category_scores:
+                chart_data = pd.DataFrame({
+                    'ticker': [cat.replace('_', ' ').title() for cat in category_scores.keys()],
+                    'score': list(category_scores.values())
+                })
+                render_ranking_chart(chart_data)
+            else:
+                st.info("No category scores available")
 
         st.markdown("---")
 
         # Radar chart comparison
         st.markdown("### Multi-Dimensional Analysis")
 
-        # Sample radar chart data
-        radar_data = {
-            'Valuation': 75,
-            'Growth': 85,
-            'Profitability': 90,
-            'Financial Health': 80,
-            'Market Position': 88
-        }
-
-        render_comparison_radar_chart(radar_data, ticker)
+        # Use actual category scores for radar chart
+        category_scores = comparison.get_category_scores()
+        if category_scores:
+            radar_data = {
+                cat.replace('_', ' ').title(): score
+                for cat, score in category_scores.items()
+            }
+            render_comparison_radar_chart(radar_data, ticker)
+        else:
+            st.info("No data available for radar chart")
 
         # Export options
         st.markdown("---")
         st.markdown("### Export Comparison")
 
-        col1, col2 = st.columns(2)
+        # Build export data from comparison results
+        export_rows = []
+        for category_name, category_obj in [
+            ('Valuation', comparison.valuation),
+            ('Growth', comparison.growth),
+            ('Profitability', comparison.profitability),
+            ('Financial Health', comparison.financial_health)
+        ]:
+            if category_obj and category_obj.metrics:
+                for metric_name, metric_comp in category_obj.metrics.items():
+                    export_rows.append({
+                        'Category': category_name,
+                        'Metric': metric_name.replace('_', ' ').title(),
+                        f'{ticker} Value': metric_comp.ticker_value,
+                        'Peer Median': metric_comp.peer_median,
+                        'Peer Average': metric_comp.peer_average,
+                        'Rank': f"{metric_comp.ranking}/{metric_comp.total_ranked}" if metric_comp.ranking else None,
+                        'Percentile': metric_comp.percentile_rank
+                    })
 
-        with col1:
-            # Combine all comparison data
-            all_data = pd.concat([
-                df_valuation.set_index('Company'),
-                df_growth.set_index('Company'),
-                df_profit.set_index('Company'),
-                df_health.set_index('Company')
-            ], axis=1)
-
-            csv_data = all_data.to_csv()
+        if export_rows:
+            export_df = pd.DataFrame(export_rows)
+            csv_data = export_df.to_csv(index=False)
 
             st.download_button(
                 label="📥 Export Comparison CSV",
@@ -429,18 +450,8 @@ def main():
                 mime="text/csv",
                 use_container_width=True
             )
-
-        with col2:
-            # Export ranking data
-            ranking_csv = ranking_data.to_csv(index=False)
-
-            st.download_button(
-                label="📥 Export Rankings CSV",
-                data=ranking_csv,
-                file_name=f"peer_rankings_{ticker}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        else:
+            st.info("No data available to export")
 
     else:
         # Show example comparisons

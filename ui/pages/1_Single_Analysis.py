@@ -16,6 +16,8 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.main import run_analysis
+from src.analysis import AnalysisRecord, AnalysisHistoryStorage
+from src.portfolio import PortfolioStorage, WatchlistItem
 from ui.components.ticker_input import render_ticker_input
 from ui.components.decision_card import render_decision_card
 from ui.components.analysis_view import render_analysis_sections
@@ -246,6 +248,22 @@ def main():
                     st.session_state.analysis_result = result
                     st.session_state.analysis_timestamp = datetime.now()
 
+                    # Auto-save to analysis history
+                    try:
+                        history_storage = AnalysisHistoryStorage()
+                        company_name = validation.get("company_name", ticker)
+                        record = AnalysisRecord.from_agent_state(
+                            state=result,
+                            ticker=ticker,
+                            company_name=company_name,
+                            mode="quick" if quick_mode else "deep"
+                        )
+                        analysis_id = history_storage.save_analysis(record)
+                        st.session_state.current_analysis_id = analysis_id
+                        st.session_state.current_company_name = company_name
+                    except Exception as save_error:
+                        st.warning(f"Could not save to analysis history: {save_error}")
+
                 else:
                     st.error("Analysis failed. Please check logs for details.")
                     st.session_state.analysis_running = False
@@ -298,6 +316,64 @@ def main():
 
         with col3:
             st.markdown(f"**Analysis Time:** {st.session_state.analysis_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Add to Watchlist section
+        st.markdown("---")
+        st.markdown("### Add to Portfolio Watchlist")
+
+        portfolio_storage = PortfolioStorage()
+        portfolios = portfolio_storage.list_portfolios()
+
+        if not portfolios:
+            st.info("No portfolios found. Create a portfolio first on the Portfolio page.")
+        else:
+            watchlist_col1, watchlist_col2, watchlist_col3 = st.columns([2, 1, 1])
+
+            with watchlist_col1:
+                selected_portfolio = st.selectbox(
+                    "Select Portfolio",
+                    portfolios,
+                    key="watchlist_portfolio_select"
+                )
+
+            with watchlist_col2:
+                target_price = st.number_input(
+                    "Target Price ($)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=0.01,
+                    help="Optional: Set a target price for when you want to buy"
+                )
+
+            with watchlist_col3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                add_to_watchlist_btn = st.button(
+                    "➕ Add to Watchlist",
+                    type="primary",
+                    use_container_width=True
+                )
+
+            if add_to_watchlist_btn and selected_portfolio:
+                ticker_to_add = st.session_state.current_ticker
+                company_name = getattr(st.session_state, 'current_company_name', ticker_to_add)
+                analysis_id = getattr(st.session_state, 'current_analysis_id', None)
+
+                # Check if already in watchlist
+                if portfolio_storage.is_in_watchlist(selected_portfolio, ticker_to_add):
+                    st.warning(f"{ticker_to_add} is already in the watchlist for {selected_portfolio}")
+                else:
+                    try:
+                        watchlist_item = WatchlistItem(
+                            ticker=ticker_to_add,
+                            company_name=company_name,
+                            portfolio_name=selected_portfolio,
+                            analysis_id=analysis_id,
+                            target_price=target_price if target_price > 0 else None
+                        )
+                        portfolio_storage.add_to_watchlist(watchlist_item)
+                        st.success(f"Added {ticker_to_add} to watchlist for {selected_portfolio}!")
+                    except Exception as e:
+                        st.error(f"Failed to add to watchlist: {str(e)}")
 
         st.markdown("---")
 

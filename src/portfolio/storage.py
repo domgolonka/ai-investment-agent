@@ -15,6 +15,7 @@ import structlog
 from .position import Position
 from .transaction import Transaction, TransactionType
 from .manager import PortfolioManager
+from .watchlist import WatchlistItem
 from ..exceptions import InvestmentAgentError
 
 logger = structlog.get_logger(__name__)
@@ -137,6 +138,32 @@ class PortfolioStorage:
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_transactions_date
                     ON transactions(date)
+                """)
+
+                # Create watchlist table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS watchlist (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        portfolio_name TEXT NOT NULL,
+                        ticker TEXT NOT NULL,
+                        company_name TEXT,
+                        analysis_id INTEGER,
+                        target_price REAL,
+                        notes TEXT,
+                        added_at TEXT NOT NULL,
+                        UNIQUE(portfolio_name, ticker),
+                        FOREIGN KEY (portfolio_name) REFERENCES portfolios(name)
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_watchlist_portfolio
+                    ON watchlist(portfolio_name)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_watchlist_ticker
+                    ON watchlist(ticker)
                 """)
 
                 conn.commit()
@@ -726,3 +753,424 @@ class PortfolioStorage:
         )
 
         return manager
+
+    # =========================================================================
+    # Watchlist Methods
+    # =========================================================================
+
+    def add_to_watchlist(self, item: WatchlistItem) -> int:
+        """
+        Add a stock to the watchlist.
+
+        Args:
+            item: WatchlistItem to add
+
+        Returns:
+            Database ID of the created watchlist item
+
+        Raises:
+            StorageError: If add operation fails (e.g., duplicate)
+
+        Example:
+            >>> item = WatchlistItem(ticker="AAPL", company_name="Apple Inc.",
+            ...                      portfolio_name="My Portfolio", analysis_id=42)
+            >>> item_id = storage.add_to_watchlist(item)
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            with conn:
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    INSERT INTO watchlist (
+                        portfolio_name, ticker, company_name, analysis_id,
+                        target_price, notes, added_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item.portfolio_name,
+                    item.ticker,
+                    item.company_name,
+                    item.analysis_id,
+                    item.target_price,
+                    item.notes,
+                    item.added_at.isoformat() if item.added_at else datetime.now().isoformat()
+                ))
+
+                conn.commit()
+                item_id = cursor.lastrowid
+
+                logger.info(
+                    "watchlist_item_added",
+                    id=item_id,
+                    ticker=item.ticker,
+                    portfolio=item.portfolio_name
+                )
+
+                return item_id
+
+        except sqlite3.IntegrityError as e:
+            raise StorageError(
+                "Stock already in watchlist",
+                details={"ticker": item.ticker, "portfolio": item.portfolio_name},
+                cause=e
+            )
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to add to watchlist",
+                details={"ticker": item.ticker},
+                cause=e
+            )
+
+    def remove_from_watchlist(self, portfolio_name: str, ticker: str) -> bool:
+        """
+        Remove a stock from the watchlist.
+
+        Args:
+            portfolio_name: Name of the portfolio
+            ticker: Stock ticker to remove
+
+        Returns:
+            True if removed, False if not found
+
+        Example:
+            >>> storage.remove_from_watchlist("My Portfolio", "AAPL")
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            with conn:
+                cursor = conn.cursor()
+
+                ticker = ticker.strip().upper()
+
+                cursor.execute("""
+                    DELETE FROM watchlist
+                    WHERE portfolio_name = ? AND ticker = ?
+                """, (portfolio_name, ticker))
+
+                conn.commit()
+                deleted = cursor.rowcount > 0
+
+                if deleted:
+                    logger.info(
+                        "watchlist_item_removed",
+                        ticker=ticker,
+                        portfolio=portfolio_name
+                    )
+
+                return deleted
+
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to remove from watchlist",
+                details={"ticker": ticker, "portfolio": portfolio_name},
+                cause=e
+            )
+
+    def get_watchlist(self, portfolio_name: str) -> List[WatchlistItem]:
+        """
+        Get all watchlist items for a portfolio.
+
+        Args:
+            portfolio_name: Name of the portfolio
+
+        Returns:
+            List of WatchlistItems with analysis data populated
+
+        Example:
+            >>> items = storage.get_watchlist("My Portfolio")
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            cursor = conn.cursor()
+
+            # Join with analysis_history to get signal and date
+            cursor.execute("""
+                SELECT w.id, w.portfolio_name, w.ticker, w.company_name,
+                       w.analysis_id, w.target_price, w.notes, w.added_at,
+                       a.signal, a.analysis_date
+                FROM watchlist w
+                LEFT JOIN analysis_history a ON w.analysis_id = a.id
+                WHERE w.portfolio_name = ?
+                ORDER BY w.added_at DESC
+            """, (portfolio_name,))
+
+            items = []
+            for row in cursor.fetchall():
+                item = WatchlistItem(
+                    id=row[0],
+                    portfolio_name=row[1],
+                    ticker=row[2],
+                    company_name=row[3],
+                    analysis_id=row[4],
+                    target_price=row[5],
+                    notes=row[6],
+                    added_at=datetime.fromisoformat(row[7]) if row[7] else None,
+                    latest_signal=row[8],
+                    analysis_date=datetime.fromisoformat(row[9]) if row[9] else None
+                )
+                items.append(item)
+
+            return items
+
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to get watchlist",
+                details={"portfolio": portfolio_name},
+                cause=e
+            )
+
+    def get_watchlist_item(self, portfolio_name: str, ticker: str) -> Optional[WatchlistItem]:
+        """
+        Get a specific watchlist item.
+
+        Args:
+            portfolio_name: Name of the portfolio
+            ticker: Stock ticker
+
+        Returns:
+            WatchlistItem if found, None otherwise
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            cursor = conn.cursor()
+            ticker = ticker.strip().upper()
+
+            cursor.execute("""
+                SELECT w.id, w.portfolio_name, w.ticker, w.company_name,
+                       w.analysis_id, w.target_price, w.notes, w.added_at,
+                       a.signal, a.analysis_date
+                FROM watchlist w
+                LEFT JOIN analysis_history a ON w.analysis_id = a.id
+                WHERE w.portfolio_name = ? AND w.ticker = ?
+            """, (portfolio_name, ticker))
+
+            row = cursor.fetchone()
+            if row:
+                return WatchlistItem(
+                    id=row[0],
+                    portfolio_name=row[1],
+                    ticker=row[2],
+                    company_name=row[3],
+                    analysis_id=row[4],
+                    target_price=row[5],
+                    notes=row[6],
+                    added_at=datetime.fromisoformat(row[7]) if row[7] else None,
+                    latest_signal=row[8],
+                    analysis_date=datetime.fromisoformat(row[9]) if row[9] else None
+                )
+            return None
+
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to get watchlist item",
+                details={"ticker": ticker, "portfolio": portfolio_name},
+                cause=e
+            )
+
+    def update_watchlist_item(
+        self,
+        portfolio_name: str,
+        ticker: str,
+        target_price: Optional[float] = None,
+        notes: Optional[str] = None
+    ) -> bool:
+        """
+        Update a watchlist item's target price or notes.
+
+        Args:
+            portfolio_name: Name of the portfolio
+            ticker: Stock ticker
+            target_price: New target price (or None to keep unchanged)
+            notes: New notes (or None to keep unchanged)
+
+        Returns:
+            True if updated, False if not found
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            with conn:
+                cursor = conn.cursor()
+                ticker = ticker.strip().upper()
+
+                updates = []
+                params = []
+
+                if target_price is not None:
+                    updates.append("target_price = ?")
+                    params.append(target_price)
+
+                if notes is not None:
+                    updates.append("notes = ?")
+                    params.append(notes)
+
+                if not updates:
+                    return False
+
+                params.extend([portfolio_name, ticker])
+
+                cursor.execute(f"""
+                    UPDATE watchlist
+                    SET {", ".join(updates)}
+                    WHERE portfolio_name = ? AND ticker = ?
+                """, params)
+
+                conn.commit()
+                return cursor.rowcount > 0
+
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to update watchlist item",
+                details={"ticker": ticker, "portfolio": portfolio_name},
+                cause=e
+            )
+
+    def convert_watchlist_to_position(
+        self,
+        portfolio_name: str,
+        ticker: str,
+        shares: float,
+        price: float,
+        fees: float = 0.0,
+        currency: str = "USD",
+        notes: Optional[str] = None
+    ) -> bool:
+        """
+        Convert a watchlist item to an actual position.
+
+        This creates a buy transaction, adds/updates the position,
+        and removes the item from the watchlist.
+
+        Args:
+            portfolio_name: Name of the portfolio
+            ticker: Stock ticker to convert
+            shares: Number of shares to buy
+            price: Purchase price per share
+            fees: Transaction fees
+            currency: Currency code
+            notes: Optional transaction notes
+
+        Returns:
+            True if successful
+
+        Raises:
+            StorageError: If conversion fails
+        """
+        try:
+            # First check if item exists in watchlist
+            item = self.get_watchlist_item(portfolio_name, ticker)
+            if not item:
+                raise StorageError(
+                    "Watchlist item not found",
+                    details={"ticker": ticker, "portfolio": portfolio_name}
+                )
+
+            # Load portfolio
+            manager = self.load_portfolio(portfolio_name)
+            if not manager:
+                raise StorageError(
+                    "Portfolio not found",
+                    details={"portfolio": portfolio_name}
+                )
+
+            # Create buy transaction
+            from .transaction import create_buy_transaction
+            transaction = create_buy_transaction(
+                ticker=ticker,
+                shares=shares,
+                price=price,
+                fees=fees,
+                currency=currency,
+                notes=notes or f"Converted from watchlist"
+            )
+
+            # Add position or update existing
+            if manager.has_position(ticker):
+                position = manager.get_position(ticker)
+                position.add_shares(shares, price)
+            else:
+                position = Position(
+                    ticker=ticker,
+                    shares=shares,
+                    avg_cost=price,
+                    currency=currency,
+                    purchase_date=datetime.now(),
+                    current_price=price,
+                    notes=item.notes
+                )
+                manager.add_position(position)
+
+            # Record transaction
+            manager.record_transaction(transaction)
+
+            # Save portfolio
+            self.save_portfolio(manager)
+
+            # Remove from watchlist
+            self.remove_from_watchlist(portfolio_name, ticker)
+
+            logger.info(
+                "watchlist_converted_to_position",
+                ticker=ticker,
+                portfolio=portfolio_name,
+                shares=shares,
+                price=price
+            )
+
+            return True
+
+        except StorageError:
+            raise
+        except Exception as e:
+            raise StorageError(
+                "Failed to convert watchlist to position",
+                details={"ticker": ticker, "portfolio": portfolio_name},
+                cause=e
+            )
+
+    def is_in_watchlist(self, portfolio_name: str, ticker: str) -> bool:
+        """
+        Check if a ticker is in the watchlist.
+
+        Args:
+            portfolio_name: Name of the portfolio
+            ticker: Stock ticker to check
+
+        Returns:
+            True if in watchlist, False otherwise
+        """
+        try:
+            conn = self._get_connection()
+            if not self._connection:
+                conn = sqlite3.connect(self.db_path)
+
+            cursor = conn.cursor()
+            ticker = ticker.strip().upper()
+
+            cursor.execute("""
+                SELECT 1 FROM watchlist
+                WHERE portfolio_name = ? AND ticker = ?
+            """, (portfolio_name, ticker))
+
+            return cursor.fetchone() is not None
+
+        except sqlite3.Error as e:
+            raise StorageError(
+                "Failed to check watchlist",
+                details={"ticker": ticker, "portfolio": portfolio_name},
+                cause=e
+            )
